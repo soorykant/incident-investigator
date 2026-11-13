@@ -1,0 +1,60 @@
+{
+  "id": "inc07",
+  "report": {
+    "title": "Storefront 5xx alert firing",
+    "symptoms": [
+      "storefront 5xx rate above 18% since about 18:21 UTC",
+      "Add-to-cart and cart totals are failing; browsing works",
+      "The alert has not cleared after 30 minutes"
+    ],
+    "affected_service": "storefront",
+    "window_start": "2026-11-16T18:00:00Z",
+    "window_end": "2026-11-16T19:00:00Z",
+    "severity": "SEV1"
+  },
+  "logs": [
+    {"id": "log:inc07:0001", "timestamp": "2026-11-16T18:06:15Z", "service": "storefront", "level": "INFO", "message": "Starting storefront v12.3.0 (new product carousel)"},
+    {"id": "log:inc07:0002", "timestamp": "2026-11-16T18:20:01Z", "service": "promo-db", "level": "WARN", "message": "Primary failover started (planned host patching)"},
+    {"id": "log:inc07:0003", "timestamp": "2026-11-16T18:20:19Z", "service": "promo-db", "level": "INFO", "message": "Primary failover completed in 18s; accepting writes"},
+    {"id": "log:inc07:0004", "timestamp": "2026-11-16T18:20:05Z", "service": "pricing-svc", "level": "ERROR", "message": "promo-db query failed: connection reset (failover in progress)"},
+    {"id": "log:inc07:0005", "timestamp": "2026-11-16T18:20:06Z", "service": "cart-svc", "level": "WARN", "message": "pricing-svc call failed (503), retry 1/5 (pricing-client: max_attempts=5, backoff=0ms, jitter=off)"},
+    {"id": "log:inc07:0006", "timestamp": "2026-11-16T18:20:06Z", "service": "cart-svc", "level": "WARN", "message": "pricing-svc call failed (503), retry 5/5 (pricing-client: max_attempts=5, backoff=0ms, jitter=off)"},
+    {"id": "log:inc07:0007", "timestamp": "2026-11-16T18:20:40Z", "service": "pricing-svc", "level": "WARN", "message": "Request queue full (2000/2000), rejecting with 503"},
+    {"id": "log:inc07:0008", "timestamp": "2026-11-16T18:21:10Z", "service": "storefront", "level": "ERROR", "message": "POST /cart/items 502: cart-svc timed out after 3 attempts"},
+    {"id": "log:inc07:0009", "timestamp": "2026-11-16T18:24:30Z", "service": "pricing-svc", "level": "WARN", "message": "GC pause 1.9s under load (heap 88%)"},
+    {"id": "log:inc07:0010", "timestamp": "2026-11-16T18:26:02Z", "service": "cart-svc", "level": "ERROR", "message": "Retry budget unlimited: 46,210 pricing-svc retries in last 60s for 4,020 cart requests"},
+    {"id": "log:inc07:0011", "timestamp": "2026-11-16T18:30:00Z", "service": "promo-db", "level": "INFO", "message": "Health: CPU 21%, p99 query 4ms, replication healthy"},
+    {"id": "log:inc07:0012", "timestamp": "2026-11-16T18:35:44Z", "service": "storefront", "level": "ERROR", "message": "GET /cart 502: cart-svc timed out after 3 attempts"},
+    {"id": "log:inc07:0013", "timestamp": "2026-11-16T18:41:05Z", "service": "pricing-svc", "level": "WARN", "message": "Request queue full (2000/2000), rejecting with 503"}
+  ],
+  "metrics": [
+    {"id": "metric:inc07:sf5xx:0001", "timestamp": "2026-11-16T18:15:00Z", "service": "storefront", "name": "error_rate_pct", "value": 0.4},
+    {"id": "metric:inc07:sf5xx:0002", "timestamp": "2026-11-16T18:25:00Z", "service": "storefront", "name": "error_rate_pct", "value": 18.6},
+    {"id": "metric:inc07:sfrps:0001", "timestamp": "2026-11-16T18:25:00Z", "service": "storefront", "name": "requests_per_s", "value": 810.0},
+    {"id": "metric:inc07:cartout:0001", "timestamp": "2026-11-16T18:15:00Z", "service": "cart-svc", "name": "outbound_pricing_rps", "value": 420.0},
+    {"id": "metric:inc07:cartout:0002", "timestamp": "2026-11-16T18:25:00Z", "service": "cart-svc", "name": "outbound_pricing_rps", "value": 7650.0},
+    {"id": "metric:inc07:cartin:0001", "timestamp": "2026-11-16T18:25:00Z", "service": "cart-svc", "name": "requests_per_s", "value": 455.0},
+    {"id": "metric:inc07:pcpu:0001", "timestamp": "2026-11-16T18:15:00Z", "service": "pricing-svc", "name": "cpu_pct", "value": 34.0},
+    {"id": "metric:inc07:pcpu:0002", "timestamp": "2026-11-16T18:25:00Z", "service": "pricing-svc", "name": "cpu_pct", "value": 99.0},
+    {"id": "metric:inc07:pdb:0001", "timestamp": "2026-11-16T18:25:00Z", "service": "promo-db", "name": "cpu_pct", "value": 22.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc07:0001", "timestamp": "2026-11-16T18:05:00Z", "service": "storefront", "version": "v12.3.0", "description": "New product carousel on the home page"},
+    {"id": "deploy:inc07:0002", "timestamp": "2026-11-02T10:00:00Z", "service": "cart-svc", "version": "v8.0.0", "description": "Move to shared pricing-client library"}
+  ],
+  "config_changes": [],
+  "dependencies": [
+    {"id": "dependency:inc07:0001", "service": "storefront", "depends_on": "cart-svc"},
+    {"id": "dependency:inc07:0002", "service": "storefront", "depends_on": "catalog-svc"},
+    {"id": "dependency:inc07:0003", "service": "cart-svc", "depends_on": "pricing-svc"},
+    {"id": "dependency:inc07:0004", "service": "pricing-svc", "depends_on": "promo-db"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc07:0001", "title": "pricing-svc CPU saturation during holiday sale", "tags": ["pricing", "cpu", "scaling"], "root_cause": "pricing-svc ran out of CPU at peak traffic", "resolution": "Scaled pricing-svc out to 3x replicas"},
+    {"id": "past:inc07:0002", "title": "Storefront errors after home page release", "tags": ["storefront", "deploy", "rollback"], "root_cause": "A home page release called an unindexed endpoint", "resolution": "Rolled back storefront"}
+  ],
+  "failure_schedule": [
+    {"tool": "logs", "call_index": 2, "mode": "error"},
+    {"tool": "dependencies", "call_index": 1, "mode": "partial", "partial_fraction": 0.5}
+  ]
+}

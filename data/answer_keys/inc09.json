@@ -1,0 +1,21 @@
+{
+  "incident_id": "inc09",
+  "expected_outcome": "inconclusive",
+  "service": null,
+  "category": null,
+  "key_evidence_ids": ["log:inc09:0004", "log:inc09:0006", "metric:inc09:depth:0003", "log:inc09:0007"],
+  "traps": [
+    {
+      "description": "notification-svc v3.3.0 bumped its queue client 3 minutes before lag started, which looks like a bad deploy; but the logs from 02:14 to 02:58 were dropped, so nothing shows the new client failing, and recovery came from a consumer rebalance, not a rollback",
+      "misleading_evidence_ids": ["deploy:inc09:0001", "log:inc09:0002", "log:inc09:0003"]
+    },
+    {
+      "description": "Lowering queue-broker's consumer.max_inflight, with a matching past incident, looks like a config cause; but the setting was never reverted and delivery recovered anyway",
+      "misleading_evidence_ids": ["config:inc09:0001", "past:inc09:0001"]
+    },
+    {
+      "description": "A single 429 from the push provider and a past incident about provider throttling suggest a third-party limit; it was one retried batch, and send rate was low because the queue was not being consumed",
+      "misleading_evidence_ids": ["log:inc09:0005", "past:inc09:0002", "metric:inc09:sent:0001"]
+    }
+  ]
+}

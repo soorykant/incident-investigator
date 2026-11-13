@@ -1,0 +1,60 @@
+{
+  "id": "inc04",
+  "report": {
+    "title": "Image uploads failing in waves",
+    "symptoms": [
+      "About 25% of image upload requests fail with HTTP 502 since about 03:20 UTC",
+      "Failures come in bursts a few minutes apart",
+      "Already-uploaded images still display"
+    ],
+    "affected_service": "image-resizer",
+    "window_start": "2026-11-13T02:45:00Z",
+    "window_end": "2026-11-13T04:00:00Z",
+    "severity": "SEV3"
+  },
+  "logs": [
+    {"id": "log:inc04:0001", "timestamp": "2026-11-13T02:52:30Z", "service": "thumbnail-cache", "level": "WARN", "message": "Cold start after deploy: hit ratio 12% (normal 85%)"},
+    {"id": "log:inc04:0002", "timestamp": "2026-11-13T03:05:10Z", "service": "image-resizer", "level": "WARN", "message": "GC pause 1.9s, heap 3.71 GiB of 4.00 GiB"},
+    {"id": "log:inc04:0003", "timestamp": "2026-11-13T03:08:44Z", "service": "image-resizer", "level": "WARN", "message": "Rejected upload: 61 MB exceeds the 50 MB limit (client app 5.2.0)"},
+    {"id": "log:inc04:0004", "timestamp": "2026-11-13T03:12:02Z", "service": "image-resizer", "level": "INFO", "message": "decoder buffer pool: 31,442 buffers held (pool never shrinks), 3.80 GiB"},
+    {"id": "log:inc04:0005", "timestamp": "2026-11-13T03:19:51Z", "service": "image-resizer", "level": "ERROR", "message": "Container image-resizer in pod image-resizer-7c9-2 OOMKilled (limit 4096Mi, uptime 117h)"},
+    {"id": "log:inc04:0006", "timestamp": "2026-11-13T03:20:05Z", "service": "upload-api", "level": "ERROR", "message": "POST /images 502: image-resizer connection reset by peer"},
+    {"id": "log:inc04:0007", "timestamp": "2026-11-13T03:24:37Z", "service": "image-resizer", "level": "ERROR", "message": "Container image-resizer in pod image-resizer-7c9-4 OOMKilled (limit 4096Mi, uptime 117h)"},
+    {"id": "log:inc04:0008", "timestamp": "2026-11-13T03:25:10Z", "service": "image-resizer", "level": "WARN", "message": "GC pause 2.6s, heap 3.96 GiB of 4.00 GiB"},
+    {"id": "log:inc04:0009", "timestamp": "2026-11-13T03:31:02Z", "service": "image-resizer", "level": "ERROR", "message": "Container image-resizer in pod image-resizer-7c9-1 OOMKilled (limit 4096Mi, uptime 117h)"},
+    {"id": "log:inc04:0010", "timestamp": "2026-11-13T03:31:20Z", "service": "upload-api", "level": "ERROR", "message": "POST /images 502: image-resizer connection reset by peer"},
+    {"id": "log:inc04:0011", "timestamp": "2026-11-13T03:33:40Z", "service": "image-resizer", "level": "INFO", "message": "Started image-resizer v3.4.2 in pod image-resizer-7c9-2, heap 0.61 GiB"},
+    {"id": "log:inc04:0012", "timestamp": "2026-11-13T03:40:15Z", "service": "image-resizer", "level": "WARN", "message": "Rejected upload: 58 MB exceeds the 50 MB limit (client app 5.2.0)"}
+  ],
+  "metrics": [
+    {"id": "metric:inc04:mem:0001", "timestamp": "2026-11-08T10:00:00Z", "service": "image-resizer", "name": "memory_rss_mib_max", "value": 820.0},
+    {"id": "metric:inc04:mem:0002", "timestamp": "2026-11-10T10:00:00Z", "service": "image-resizer", "name": "memory_rss_mib_max", "value": 2150.0},
+    {"id": "metric:inc04:mem:0003", "timestamp": "2026-11-12T10:00:00Z", "service": "image-resizer", "name": "memory_rss_mib_max", "value": 3420.0},
+    {"id": "metric:inc04:mem:0004", "timestamp": "2026-11-13T03:00:00Z", "service": "image-resizer", "name": "memory_rss_mib_max", "value": 3890.0},
+    {"id": "metric:inc04:mem:0005", "timestamp": "2026-11-13T03:15:00Z", "service": "image-resizer", "name": "memory_rss_mib_max", "value": 4060.0},
+    {"id": "metric:inc04:oom:0001", "timestamp": "2026-11-13T03:35:00Z", "service": "image-resizer", "name": "oom_kills_total", "value": 3.0},
+    {"id": "metric:inc04:rps:0001", "timestamp": "2026-11-13T02:45:00Z", "service": "image-resizer", "name": "requests_per_s", "value": 212.0},
+    {"id": "metric:inc04:rps:0002", "timestamp": "2026-11-13T03:15:00Z", "service": "image-resizer", "name": "requests_per_s", "value": 219.0},
+    {"id": "metric:inc04:upl:0001", "timestamp": "2026-11-13T03:30:00Z", "service": "upload-api", "name": "error_rate_pct", "value": 24.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc04:0001", "timestamp": "2026-11-13T02:50:00Z", "service": "thumbnail-cache", "version": "v2.0.0", "description": "Switch eviction policy from LRU to LFU"},
+    {"id": "deploy:inc04:0002", "timestamp": "2026-10-29T09:00:00Z", "service": "image-resizer", "version": "v3.4.2", "description": "Patch release: update base image"}
+  ],
+  "config_changes": [
+    {"id": "config:inc04:0001", "timestamp": "2026-11-12T16:00:00Z", "service": "upload-api", "key": "image_resizer.timeout_ms", "old_value": "8000", "new_value": "10000"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc04:0001", "service": "upload-api", "depends_on": "image-resizer"},
+    {"id": "dependency:inc04:0002", "service": "image-resizer", "depends_on": "thumbnail-cache"},
+    {"id": "dependency:inc04:0003", "service": "image-resizer", "depends_on": "blob-store"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc04:0001", "title": "Image uploads failing from oversized camera photos", "tags": ["image", "upload", "bad-input"], "root_cause": "A new phone camera produced 60 MB photos that crashed the decoder", "resolution": "Enforced a 50 MB upload limit at the edge"},
+    {"id": "past:inc04:0002", "title": "Resizer pods restarted after weekly node maintenance", "tags": ["image", "maintenance"], "root_cause": "Planned node drain", "resolution": "No action needed"}
+  ],
+  "failure_schedule": [
+    {"tool": "logs", "call_index": 1, "mode": "timeout"},
+    {"tool": "logs", "call_index": 2, "mode": "timeout"}
+  ]
+}

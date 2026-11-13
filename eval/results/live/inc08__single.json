@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc08",
+  "system": "single",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T07:07:58.900101Z",
+  "report": {
+    "incident_id": "inc08",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "recs-svc",
+        "category": "feature_flag",
+        "summary": "Enabling the ranker_v2 flag for eu-west-1 at 13:30 sent EU requests to a ranker that needs the 'session_affinity' feature. The eu-west-1 feature-store does not serve that feature yet (schema v41), so those requests return 500s and show an empty recommendations row. Mitigation: remove eu-west-1 from flags.ranker_v2.enabled_regions, or add a fallback when the feature is missing.",
+        "supporting_ids": [
+          "config:inc08:0001",
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012",
+          "log:inc08:0011"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.85,
+        "final_confidence": 0.85
+      },
+      {
+        "id": "H3",
+        "service": "recs-svc",
+        "category": "config_change",
+        "summary": "Doubling cache.size_mb at 13:10 caused memory pressure or stale cache entries that led to errors.",
+        "supporting_ids": [
+          "config:inc08:0002"
+        ],
+        "contradicting_ids": [
+          "log:inc08:0004",
+          "log:inc08:0011"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      },
+      {
+        "id": "H2",
+        "service": "feature-store",
+        "category": "dependency_failure",
+        "summary": "The feature-store schema v42 backfill in eu-west-1 is lagging or incomplete, so 'session_affinity' is missing from responses. In this view the root fault lies in the feature-store rollout and recs-svc is only a consumer.",
+        "supporting_ids": [
+          "log:inc08:0011",
+          "log:inc08:0004"
+        ],
+        "contradicting_ids": [
+          "config:inc08:0001"
+        ],
+        "proposed_confidence": 0.12,
+        "final_confidence": 0.02
+      }
+    ],
+    "facts": [
+      {
+        "statement": "recs-svc ERROR logs from 13:32:11Z to 14:02:33Z are all from eu-west-1. Each is an HTTP 500 with the message \"ranker_v2: feature 'session_affinity' not found in feature-store response\".",
+        "evidence_ids": [
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012"
+        ]
+      },
+      {
+        "statement": "At 13:30:00Z a config change on recs-svc set flags.ranker_v2.enabled_regions from '' to 'eu-west-1'. That is about 2 minutes before the first error.",
+        "evidence_ids": [
+          "config:inc08:0001",
+          "log:inc08:0004"
+        ]
+      },
+      {
+        "statement": "At 13:10:00Z a config change on recs-svc raised cache.size_mb from 512 to 1024.",
+        "evidence_ids": [
+          "config:inc08:0002"
+        ]
+      },
+      {
+        "statement": "At 13:50:00Z feature-store logged that eu-west-1 is serving schema v41. The log says session_affinity was added in v42 and is not yet backfilled in eu-west-1.",
+        "evidence_ids": [
+          "log:inc08:0011"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The ~6% overall error rate equals the eu-west-1 share of recs-svc traffic hitting ranker_v2. Other regions are unaffected.",
+        "basis": "All ERROR lines are tagged [eu-west-1] and the flag targets only eu-west-1. The error_rate metric query returned no samples, and the first full metrics query failed with a backend error.",
+        "how_to_verify": "Retry the recs-svc error_rate metrics broken down by region."
+      },
+      {
+        "statement": "recs-svc calls feature-store directly for ranking features.",
+        "basis": "The error messages reference the feature-store response. The dependencies call timed out (gap:1).",
+        "how_to_verify": "Retry the dependencies query for recs-svc."
+      },
+      {
+        "statement": "The cache.size_mb change did not contribute to the errors.",
+        "basis": "No errors appear between 13:10 and 13:32, and the error text is about a missing feature, not memory or cache.",
+        "how_to_verify": "Check recs-svc memory and cache metrics and WARN logs between 13:10 and 13:32."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Remove eu-west-1 from flags.ranker_v2.enabled_regions so EU traffic goes back to the previous ranker.",
+        "rationale": "The ranker_v2 flag was enabled for eu-west-1 at 13:30, and errors started about 13:32. Logs show ranker_v2 requests failing because the 'session_affinity' feature is missing from the eu-west-1 feature-store (schema v41). Rolling back the flag is the fastest low-risk mitigation, and it matches the mostly-EU complaint pattern.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "After the flag rollback, check that recs-svc's eu-west-1 error rate returns to its pre-13:30 baseline and that the home page 'Recommended for you' row fills in for EU test accounts.",
+        "rationale": "This confirms the rollback fixed the symptom and that ranker_v2 in eu-west-1 caused the 500s. If errors continue, other causes should be investigated.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Before re-enabling ranker_v2 for any region, add a fallback that handles a missing 'session_affinity' feature (degrade to default ranking or the v1 ranker instead of returning a 500). Also add a pre-enable check that the region's feature-store schema version includes the required features.",
+        "rationale": "This stops a region-schema mismatch from causing user-facing errors again. It also makes future flag rollouts safe even when feature-store versions differ by region.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Ask the feature-store owners for the status and ETA of the schema v42 backfill in eu-west-1, and confirm the 'session_affinity' feature is served there before ranker_v2 is enabled for the region again.",
+        "rationale": "H2 has low confidence as the trigger, but the missing feature in eu-west-1 is real. The flag should only be re-enabled once the region actually serves the feature. Checking the backfill status also settles whether a lagging rollout contributed.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Re-run the dependencies lookup for recs-svc, which timed out in the baseline task (gap:1), to confirm recs-svc's upstream dependencies in eu-west-1.",
+        "rationale": "The dependency view is missing. Restoring it would confirm that the feature-store is the only relevant upstream for the ranker_v2 path and rule out other dependency failures.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Do not roll back the 13:10 cache.size_mb change for now. Review recs-svc memory and cache metrics from 13:10 to 13:32 to check for pressure, and treat this as low priority.",
+        "rationale": "Errors started at 13:32, not 13:10, and are concentrated in the EU. The error logs point to the missing feature, not to cache or memory problems. A quick metrics check is enough to formally rule this out without adding risk from a second change.",
+        "hypothesis_id": "H3"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:1",
+        "tool": "dependencies",
+        "reason": "timeout after 3 attempts",
+        "service": "recs-svc",
+        "affects_hypotheses": [
+          "H2"
+        ],
+        "task_id": "baseline"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 6,
+      "llm_calls": 8,
+      "tokens_in": 17837,
+      "tokens_out": 3530,
+      "cache_tokens": 0,
+      "latency_s": 39.685
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in baseline: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "dependencies gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.12,
+        "confidence_after": 0.02
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "recs-svc",
+    "expected_category": "feature_flag",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 20,
+    "grounded": 20,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 5,
+        "rationale": "Every cited row says what the report claims. config:inc08:0001 shows the flag change to eu-west-1 at 13:30. log:inc08:0004/0007/0010/0012 are eu-west-1 500s for the missing 'session_affinity' feature. log:inc08:0011 confirms eu-west-1 is on schema v41 without the feature. The H3 contradicting IDs fit too. The region-split metrics (metric:inc08:eu/us) are not cited, but the report openly attributes that to failed metrics queries."
+      },
+      "fact_assumption_separation": {
+        "score": 5,
+        "rationale": "Facts are direct restatements of the cited rows. The inferences are listed as assumptions, each with a basis and a concrete way to verify: the 6% error rate equalling the EU share, recs-svc calling feature-store directly, and the cache change not contributing. One small wrinkle: the rule_adjustments mention a closed gap:2 that is not in the gaps list."
+      },
+      "recommended_actions": {
+        "score": 5,
+        "rationale": "The top action is the correct low-risk mitigation: remove eu-west-1 from flags.ranker_v2.enabled_regions. It is followed by a verification step, a durable fallback and schema pre-check, coordination on the feature-store backfill, and a sensible decision not to roll back the unrelated cache change."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The top hypothesis rests on the flag change and the missing-feature errors. The cache-size trap (config:inc08:0002) was explicitly ranked low and argued against. The network-loss and v6.0.0 deploy traps were never used."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 4870,
+      "tokens_out": 868,
+      "cache_tokens": 0
+    },
+    "latency_s": 11.706,
+    "judged_at": "2026-11-13T07:29:09.710714Z"
+  }
+}

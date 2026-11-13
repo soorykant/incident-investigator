@@ -1,0 +1,1388 @@
+{
+  "incident_id": "inc01",
+  "incident": {
+    "title": "Checkout requests failing with HTTP 500",
+    "symptoms": [
+      "Checkout error rate above 20% since about 10:05 UTC",
+      "Customers report payment page errors"
+    ],
+    "affected_service": "checkout-svc",
+    "window_start": "2026-11-10T09:45:00Z",
+    "window_end": "2026-11-10T10:30:00Z",
+    "severity": "SEV2"
+  },
+  "started_at": "2026-11-13T06:40:00.464276Z",
+  "tasks": [
+    {
+      "id": "t1",
+      "agent": "observability",
+      "goal": "Pull checkout-svc error logs and metrics (HTTP 500 rate, latency, saturation, top exception types and stack traces) for the incident window. Identify the exact onset time of the error spike around 10:05 UTC and any failing downstream calls.",
+      "params": {
+        "service": "checkout-svc",
+        "window_start": "2026-11-10T09:45:00Z",
+        "window_end": "2026-11-10T10:30:00Z",
+        "signals": [
+          "logs",
+          "metrics"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t2",
+      "agent": "observability",
+      "goal": "List deploys, config changes, feature-flag flips and infra changes to checkout-svc and its direct dependencies (especially payment-related services) between 09:45 and 10:30 UTC. Flag any change that lands just before the 10:05 onset.",
+      "params": {
+        "service": "checkout-svc",
+        "window_start": "2026-11-10T09:45:00Z",
+        "window_end": "2026-11-10T10:30:00Z",
+        "include_dependencies": true,
+        "signals": [
+          "deploys",
+          "config_changes"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t3",
+      "agent": "dependency",
+      "goal": "Map the upstream and downstream dependencies of checkout-svc, such as payment gateway, inventory, DB and cache. Find past incidents with similar checkout HTTP 500 or payment page error patterns, and note their root causes.",
+      "params": {
+        "service": "checkout-svc",
+        "depth": 2,
+        "incident_lookback_days": 180,
+        "symptom_keywords": [
+          "HTTP 500",
+          "checkout",
+          "payment"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t4",
+      "agent": "reasoning",
+      "goal": "Synthesize findings from logs/metrics, change history, and the dependency graph and past incidents. Produce ranked competing root-cause hypotheses for the checkout-svc HTTP 500 spike starting around 10:05 UTC. For each hypothesis, give supporting and contradicting evidence, confidence, and the next verification step.",
+      "params": {
+        "service": "checkout-svc",
+        "severity": "SEV2"
+      },
+      "depends_on": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "c1.1",
+      "agent": "observability",
+      "goal": "Establish exact onset ordering. Pull checkout-svc error_rate_pct and node_cpu_pct at 1-minute resolution, plus request rate if available. Confirm that errors stay at the ~0.4% baseline until after the 10:02 v2.3.1 deploy. Check whether CPU rises only after the error spike or was already elevated before 10:02.",
+      "params": {
+        "service": "checkout-svc",
+        "start": "2026-11-10T09:45:00Z",
+        "end": "2026-11-10T10:30:00Z",
+        "metrics": [
+          "error_rate_pct",
+          "node_cpu_pct",
+          "request_rate"
+        ],
+        "resolution": "1m"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c1.2",
+      "agent": "observability",
+      "goal": "Test h3. Pull pricing-db error and latency metrics, ERROR/WARN logs, and any deploy, config, schema or migration changes. Determine whether pricing-db began returning null, missing or errored discount or price records around 10:00-10:05, independent of the checkout-svc deploy.",
+      "params": {
+        "service": "pricing-db",
+        "start": "2026-11-10T09:45:00Z",
+        "end": "2026-11-10T10:30:00Z",
+        "signals": [
+          "logs",
+          "metrics",
+          "deploys"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c1.r",
+      "agent": "reasoning",
+      "goal": "Revise the hypotheses with the new findings. The Critic said: h1 is well supported. A checkout-svc v2.3.1 'Discount engine refactor' deploy at 10:02 is followed by an NPE in v2.3.1 PriceCalculator.applyDiscount at 10:04:51 and by 500s on POST /checkout. Error rate went from 0.4% at 10:00 to 23.5% at 10:06, and a past incident followed the same pattern. h4 (search-svc TTL) has no dependency path and fails to explain an NPE in discount code, so it can stay low. Three things are weaker than the ranking implies.\n\n1. **Onset timing.** The error-rate metric has only two samples, 10:00 and 10:06. An onset before 10:02 cannot be excluded, and that would break the deploy causality. The CPU reading is also a single sample at 10:06, so h2's 'CPU is a side effect' claim is assumed, not shown. A 1-minute series would settle both questions.\n\n2. **The pricing-db alternative (h3) was never tested.** An NPE in applyDiscount is exactly what you would see if pricing-db started returning null or missing discount rows. The deploy and the data change could also interact: v2.3.1 dereferencing a field that was always occasionally null. pricing-db logs, metrics and schema or migration changes were never queried. Absence of pricing-db references in checkout logs is weak evidence, because an NPE on a null row would not name the DB. Rollback is still a reasonable mitigation either way. However, if pricing-db data changed, rollback alone may not restore the baseline, or a later re-release would fail again.\n\n3. **Smaller evidence gaps.** These are lower priority and unlikely to change the ranking unless the first two checks surprise:\n- log:inc01:0005 is missing.\n- dependency:inc01:0003 is missing.\n- Three ERROR lines against a 23.5% error rate.",
+      "params": {},
+      "depends_on": [
+        "c1.1",
+        "c1.2"
+      ],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    }
+  ],
+  "findings": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "checkout-svc deployed v2.3.1 (\"Discount engine refactor\") at 2026-11-10T10:02:00Z.",
+          "evidence_ids": [
+            "deploy:inc01:0001"
+          ]
+        },
+        {
+          "statement": "The first ERROR log in the window is a NullPointerException in PriceCalculator.applyDiscount (v2.3.1) at 2026-11-10T10:04:51Z.",
+          "evidence_ids": [
+            "log:inc01:0003"
+          ]
+        },
+        {
+          "statement": "The first logged POST /checkout 500 caused by NullPointerException in PriceCalculator.applyDiscount is at 2026-11-10T10:05:07Z, and another identical 500 is logged at 2026-11-10T10:07:02Z.",
+          "evidence_ids": [
+            "log:inc01:0004",
+            "log:inc01:0006"
+          ]
+        },
+        {
+          "statement": "checkout-svc error_rate_pct was 0.4 at 2026-11-10T10:00:00Z and 23.5 at 2026-11-10T10:06:00Z.",
+          "evidence_ids": [
+            "metric:inc01:err:0001",
+            "metric:inc01:err:0002"
+          ]
+        },
+        {
+          "statement": "checkout-svc node_cpu_pct was 94.0 at 2026-11-10T10:06:00Z.",
+          "evidence_ids": [
+            "metric:inc01:cpu:0001"
+          ]
+        },
+        {
+          "statement": "checkout-svc's downstream dependencies in the service graph are payments-svc and pricing-db.",
+          "evidence_ids": [
+            "dependency:inc01:0001",
+            "dependency:inc01:0002"
+          ]
+        },
+        {
+          "statement": "The returned ERROR logs for checkout-svc in the window contain only NullPointerException failures in PriceCalculator.applyDiscount; none of the returned error lines reference payments-svc or pricing-db.",
+          "evidence_ids": [
+            "log:inc01:0003",
+            "log:inc01:0004",
+            "log:inc01:0006"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The error-rate onset is between 10:00 and 10:06 UTC, and the first NPE log at 10:04:51 is consistent with the ~10:05 onset in the report.",
+          "basis": "Metric samples are sparse (10:00 and 10:06 only), so the exact onset minute cannot be read from metrics alone.",
+          "how_to_verify": "Pull error_rate_pct at 1-minute resolution for 10:00-10:10 and compare with the first NPE timestamp."
+        },
+        {
+          "statement": "The v2.3.1 deploy at 10:02 is the trigger for the NPE spike.",
+          "basis": "Temporal ordering (deploy 10:02, first NPE 10:04:51, error-rate jump by 10:06) and the NPE message naming v2.3.1 code. This is correlation plus a plausible code path, not a confirmed cause.",
+          "how_to_verify": "Diff v2.3.1 against the prior version for applyDiscount null handling; check whether reverting to the prior version clears the NPE; check for a null input (e.g., a discount or price record) that v2.3.1 newly dereferences."
+        },
+        {
+          "statement": "The CPU spike (94%) is a side effect of errors or retries, not a cause of the 500s.",
+          "basis": "Single CPU sample at 10:06 with no baseline or saturation trend returned.",
+          "how_to_verify": "Pull node_cpu_pct and request-rate metrics for 09:45-10:30 and check whether CPU rises after the deploy or after the error spike."
+        },
+        {
+          "statement": "The downstream services payments-svc and pricing-db are not implicated.",
+          "basis": "No error logs from checkout-svc referencing them were returned. Their own logs and metrics were not queried, so this is an absence of evidence.",
+          "how_to_verify": "Query logs and error metrics for payments-svc and pricing-db over 09:45-10:30 and check for timeouts or 5xx responses."
+        },
+        {
+          "statement": "Latency and saturation metrics beyond CPU, and stack traces, are not available in this data.",
+          "basis": "The unfiltered metrics call returned only error_rate_pct and node_cpu_pct. Log payloads contain messages only, with no stack traces.",
+          "how_to_verify": "Query p50/p99 latency, memory, and thread or connection pool metrics by name, and fetch full log entries (or traces) for the NPE events."
+        },
+        {
+          "statement": "The log stream may be incomplete. Evidence IDs jump from log:inc01:0004 to 0006, and the WARN query returned no rows.",
+          "basis": "The ERROR query returned three entries with omitted=0, which leaves a missing ID (0005) unexplained. The WARN query returned an empty evidence list with no error status.",
+          "how_to_verify": "Re-run the ERROR query for the same window and check whether an entry with ID 0005 appears; confirm the logging pipeline has no drops for checkout-svc."
+        },
+        {
+          "statement": "Error logs in this window only show NPEs; other 500 causes may exist without logged errors.",
+          "basis": "Only three ERROR entries were returned and all are the same NPE. The 23.5% error rate suggests more failing requests than the logs show.",
+          "how_to_verify": "Compare request-level 500 counts with the logged error count, and check access logs or traces for 500 responses without a matching ERROR line."
+        }
+      ]
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "checkout-svc deployed v2.3.1 (description: 'Discount engine refactor') at 2026-11-10T10:02:00Z, about 3 minutes before the reported 10:05 UTC error onset.",
+          "evidence_ids": [
+            "deploy:inc01:0001"
+          ]
+        },
+        {
+          "statement": "search-svc had a config change at 2026-11-10T09:58:00Z: cache.ttl_seconds changed from 300 to 60. This lands about 7 minutes before onset.",
+          "evidence_ids": [
+            "config:inc01:0001"
+          ]
+        },
+        {
+          "statement": "The dependency graph lists checkout-svc as depending on payments-svc and pricing-db, and web-frontend as depending on checkout-svc.",
+          "evidence_ids": [
+            "dependency:inc01:0001",
+            "dependency:inc01:0002",
+            "dependency:inc01:0004"
+          ]
+        },
+        {
+          "statement": "search-svc does not appear in the returned dependency edges for checkout-svc, so the search-svc config change is not on a direct dependency path in this graph.",
+          "evidence_ids": [
+            "dependency:inc01:0001",
+            "dependency:inc01:0002",
+            "dependency:inc01:0004",
+            "config:inc01:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "No deploys or config changes to payments-svc occurred between 09:45 and 10:30 UTC.",
+          "basis": "The payments-svc-scoped deploys query returned an empty evidence list with status ok. No evidence ID exists for an empty result, so this is an inference from absence.",
+          "how_to_verify": "Check the payments-svc change history directly, including config and feature-flag systems, for 09:45-10:30 UTC."
+        },
+        {
+          "statement": "pricing-db had no deploys or config changes in the window.",
+          "basis": "The all-services deploys query returned only the search-svc config change and the checkout-svc deploy. Absence of pricing-db entries is inferred, not directly shown.",
+          "how_to_verify": "Query pricing-db infra and config change logs (e.g., DB parameter, schema, or migration changes) for 09:45-10:30 UTC."
+        },
+        {
+          "statement": "The v2.3.1 deploy at 10:02 UTC is the most likely trigger of the checkout errors.",
+          "basis": "Timing: the deploy precedes the 10:05 onset by 3 minutes, and it is the only checkout-svc change in the window. Causation is not established by the change records alone.",
+          "how_to_verify": "Compare checkout-svc 5xx rate and error logs before and after 10:02 UTC; check whether errors cluster on discount-related code paths; consider rolling back or canary-disabling v2.3.1 in a test environment."
+        },
+        {
+          "statement": "Feature-flag flips and infrastructure changes were not checked.",
+          "basis": "The deploys tool covers only deploys and config changes. No available tool returns feature flags or infra changes, so those signals are unverified for checkout-svc, payments-svc, and pricing-db.",
+          "how_to_verify": "Pull feature-flag audit logs and infra change records (IaC/Terraform applies, scaling events, network changes) for the three services over 09:45-10:30 UTC."
+        },
+        {
+          "statement": "The dependency result may be incomplete.",
+          "basis": "Evidence IDs run dependency:inc01:0001, 0002, 0004, and 0003 is absent. The tool reported omitted:0, so the missing edge may be a gap in the response, not a true absence.",
+          "how_to_verify": "Re-run the dependencies query for checkout-svc with direction 'both', or check the service graph directly for the missing edge."
+        },
+        {
+          "statement": "The search-svc config change is probably unrelated to the checkout failures.",
+          "basis": "search-svc is not a listed dependency of checkout-svc, though it could be indirectly involved through shared caches or upstream calls not in this graph.",
+          "how_to_verify": "Check whether checkout-svc or payments-svc calls search-svc indirectly, and whether checkout error logs reference cache or search behavior."
+        }
+      ]
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "facts": [
+        {
+          "statement": "checkout-svc calls payments-svc (downstream dependency).",
+          "evidence_ids": [
+            "dependency:inc01:0001"
+          ]
+        },
+        {
+          "statement": "checkout-svc calls pricing-db (downstream dependency).",
+          "evidence_ids": [
+            "dependency:inc01:0002"
+          ]
+        },
+        {
+          "statement": "web-frontend calls checkout-svc (upstream caller of checkout-svc).",
+          "evidence_ids": [
+            "dependency:inc01:0004"
+          ]
+        },
+        {
+          "statement": "A past incident titled 'Checkout latency from noisy neighbour' had root cause: a co-located batch job saturated node CPU, resolved by moving the batch job to a dedicated node pool.",
+          "evidence_ids": [
+            "past:inc01:0001"
+          ]
+        },
+        {
+          "statement": "A past incident titled 'Checkout 500s after a pricing release' had root cause: a release added a null-handling bug in the discount code, resolved by rolling back the release and adding a null check.",
+          "evidence_ids": [
+            "past:inc01:0002"
+          ]
+        },
+        {
+          "statement": "The first past_incidents query returned partial results (1 of 2 rows missing); the second query with tags checkout and payment returned both rows and closed that gap.",
+          "evidence_ids": [
+            "past:inc01:0001",
+            "past:inc01:0002"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "checkout-svc's dependency list is complete for direct edges. The inventory and cache dependencies named in the task were not returned.",
+          "basis": "The dependencies result contains only three edges (IDs 0001, 0002, 0004) and no inventory or cache edges. Edge ID 0003 is absent from the sequence, which may indicate a missing edge.",
+          "how_to_verify": "Re-query dependencies for checkout-svc with direction 'downstream', and for payments-svc and pricing-db, to check for additional edges and whether edge 0003 exists."
+        },
+        {
+          "statement": "The depth-2 transitive map is not established. Only direct edges were returned, so dependencies of payments-svc and pricing-db are unknown.",
+          "basis": "The dependencies call used the default single-level result and no depth parameter was honoured in the output.",
+          "how_to_verify": "Run dependencies on payments-svc and pricing-db (downstream) to extend the graph to depth 2."
+        },
+        {
+          "statement": "Neither payments-svc nor pricing-db is confirmed as the source of the HTTP 500s. The dependency edges show only topology, not health.",
+          "basis": "The dependency tool returns graph edges with no status or error data.",
+          "how_to_verify": "Pull logs and metrics (error rate, latency) for payments-svc and pricing-db in the 09:45 to 10:30 UTC window, and check deploys for those services."
+        },
+        {
+          "statement": "The past pricing-release incident may be relevant only if a recent pricing or discount change occurred. This is unconfirmed.",
+          "basis": "Past incident past:inc01:0002 shows a discount-code null-handling bug in a release, and pricing-db is a checkout dependency.",
+          "how_to_verify": "Query deploys for pricing-related services and checkout-svc from about 09:00 to 10:05 UTC on 2026-11-10."
+        }
+      ]
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The three logged NPE errors represent the bulk of the 23.5% failing requests.",
+          "basis": "Only three ERROR lines were returned, all the same NPE, while the error rate implies many more failures. Log ID 0005 is missing from the sequence.",
+          "how_to_verify": "Compare request-level 500 counts with ERROR log counts, and inspect access logs or traces for 500s without NPE lines. Re-query to recover log:inc01:0005."
+        },
+        {
+          "statement": "payments-svc and pricing-db had no changes or failures in the window.",
+          "basis": "This rests on absence of evidence. Their deploys returned empty, and their logs and metrics were never queried.",
+          "how_to_verify": "Pull payments-svc and pricing-db logs, error and latency metrics, and change history (including feature flags and schema migrations) for 09:45-10:30 UTC."
+        },
+        {
+          "statement": "The 94% CPU reading is a consequence of the error spike, not its cause.",
+          "basis": "There is a single CPU sample at 10:06 with no baseline.",
+          "how_to_verify": "Get 1-minute node_cpu_pct from 09:45 and check whether the CPU rise precedes or follows the 10:02 deploy and the first NPE."
+        },
+        {
+          "statement": "The dependency graph is complete for checkout-svc.",
+          "basis": "Edge ID dependency:inc01:0003 is missing from the returned sequence, so an edge (possibly to search-svc or a cache) may have been omitted.",
+          "how_to_verify": "Re-run the dependency query for checkout-svc in both directions and inspect the service graph directly."
+        },
+        {
+          "statement": "No feature flag flipped for discount or pricing logic in the window.",
+          "basis": "No tool covering feature flags or infra changes was queried.",
+          "how_to_verify": "Review feature-flag audit logs and infra change records for checkout-svc, payments-svc, and pricing-db over 09:45-10:30 UTC."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "checkout-svc error_rate_pct was 0.4% at 10:00:00Z.",
+          "evidence_ids": [
+            "metric:inc01:err:0001"
+          ]
+        },
+        {
+          "statement": "checkout-svc error_rate_pct was 23.5% at 10:06:00Z.",
+          "evidence_ids": [
+            "metric:inc01:err:0002"
+          ]
+        },
+        {
+          "statement": "checkout-svc node_cpu_pct was 94.0% at 10:06:00Z.",
+          "evidence_ids": [
+            "metric:inc01:cpu:0001"
+          ]
+        },
+        {
+          "statement": "A checkout-svc deploy of v2.3.1 (description: 'Discount engine refactor') occurred at 10:02:00Z.",
+          "evidence_ids": [
+            "deploy:inc01:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The error rate was at baseline (about 0.4%) until after the 10:02 v2.3.1 deploy, as the task expects.",
+          "basis": "Only one pre-deploy error_rate_pct sample exists (10:00, 0.4%). There is no sample between 10:00 and 10:06, so the 10:02 boundary cannot be confirmed from metrics.",
+          "how_to_verify": "Re-query error_rate_pct for checkout-svc at 1m resolution over 09:45 to 10:10Z and find the first minute the value rises above baseline."
+        },
+        {
+          "statement": "CPU was not elevated before 10:02, so the CPU rise followed the error spike or the deploy rather than preceding them.",
+          "basis": "The only node_cpu_pct sample is 94.0% at 10:06. No CPU value exists before 10:06, so there is no evidence either way for 10:00 to 10:06.",
+          "how_to_verify": "Retrieve node_cpu_pct at 1m resolution for 09:45 to 10:10Z and compare its rise time with the error-rate onset and the 10:02 deploy."
+        },
+        {
+          "statement": "Request rate is unavailable for this window, so the error ratio cannot be cross-checked against traffic.",
+          "basis": "The request_rate metric query returned status ok with zero evidence rows. The first full metrics call (no name filter) timed out after 3 attempts (gap:2), and the error_rate_pct and node_cpu_pct queries returned only a few sparse samples rather than 1-minute series.",
+          "how_to_verify": "Confirm the request_rate metric name exists for checkout-svc and re-query it. Retry the unfiltered metrics call, or query each metric individually at 1m resolution."
+        },
+        {
+          "statement": "The onset of errors is not yet resolved to the minute and no error-log evidence has been collected.",
+          "basis": "Metric samples are at roughly 6-minute spacing (10:00, 10:06), not the requested 1-minute resolution. Log evidence has not been pulled.",
+          "how_to_verify": "Query checkout-svc logs at level ERROR (and WARN) for 10:00 to 10:08Z to find the first failing request and its timestamp relative to the 10:02 deploy."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.2",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "The dependency graph shows checkout-svc depends on pricing-db. This is the only pricing-db edge returned, so the query shows no other upstream or downstream pricing-db relationships.",
+          "evidence_ids": [
+            "dependency:inc01:0002"
+          ]
+        },
+        {
+          "statement": "checkout-svc deployed v2.3.1 at 2026-11-10T10:02:00Z with the description 'Discount engine refactor'. This is about 2-5 minutes after the 10:00-10:05 window the hypothesis names and inside the incident window.",
+          "evidence_ids": [
+            "deploy:inc01:0001"
+          ]
+        },
+        {
+          "statement": "A config change was recorded for search-svc at 2026-11-10T09:58:00Z, setting cache.ttl_seconds from 300 to 60. The dependency query returned no edge between search-svc and pricing-db, so this change is not linked to pricing-db in the data gathered.",
+          "evidence_ids": [
+            "config:inc01:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "pricing-db had no metric samples in the window (name=null), so h3 cannot be confirmed or refuted from metrics: no error or latency data for pricing-db was observed at 09:45-10:30Z.",
+          "basis": "The metrics call returned status ok with an empty evidence list, omitted=0 and no closes_gaps. Empty results are not the same as a healthy service.",
+          "how_to_verify": "Re-query pricing-db metrics for the window, check that the metrics pipeline ingested data for pricing-db, and check that the service emits metrics under this name."
+        },
+        {
+          "statement": "pricing-db logs contain no ERROR or WARN entries and no entries at any level in the window, so the logs do not show null, missing or errored discount or price records.",
+          "basis": "Both logs calls (level=ERROR and level=null) returned status ok with empty evidence lists. Missing log ingestion would produce the same result.",
+          "how_to_verify": "Confirm pricing-db is logging and shipping to the log store by checking a wider time range or a known-active period, then re-run the ERROR query."
+        },
+        {
+          "statement": "pricing-db had no deploys or config or schema or migration changes in the window, which would rule out a change on pricing-db itself.",
+          "basis": "The pricing-db-scoped deploys call returned ok with no evidence. The all-services deploys call returned only checkout-svc and search-svc changes, with nothing for pricing-db. Changes recorded outside the deploy tool (for example direct schema migrations) would not appear here.",
+          "how_to_verify": "Check the pricing-db migration history and DDL audit log for 09:45-10:30Z, and confirm the deploy tool covers pricing-db's release pipeline."
+        },
+        {
+          "statement": "The v2.3.1 'Discount engine refactor' in checkout-svc may have changed how checkout-svc reads or interprets discount data from pricing-db, which would produce checkout 500s even if pricing-db is healthy.",
+          "basis": "Timing (10:02Z, before the 10:05 error onset in the symptoms) and the description. The refactor's scope is not in the evidence, and the dependency edge is the only link between the two services.",
+          "how_to_verify": "Diff v2.3.1 against the prior version for pricing-db client calls and response handling. Compare checkout-svc 500 stack traces for null or missing-field errors, and check whether the error rate starts at the v2.3.1 rollout time."
+        },
+        {
+          "statement": "The search-svc cache TTL change at 09:58Z is unlikely to explain checkout failures because the graph shows no search-svc to pricing-db or checkout-svc path.",
+          "basis": "Absence of edges in the dependency query, which returned only checkout-svc to pricing-db for pricing-db. Search-svc's own edges were not queried.",
+          "how_to_verify": "Query dependencies for checkout-svc and search-svc directly to confirm whether search-svc is in checkout's call path."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.r",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The error-rate onset came after the 10:02 deploy.",
+          "basis": "The c1.1 re-query again returned only the 10:00 (0.4%) and 10:06 (23.5%) samples. The earliest error evidence is the NPE at 10:04:51. An onset between 10:00 and 10:02 is not excluded.",
+          "how_to_verify": "Retrieve error_rate_pct at 1-minute resolution for 09:45-10:10, or count 500s per minute from access logs, and find the first minute above baseline."
+        },
+        {
+          "statement": "pricing-db is healthy and its data did not change in the window.",
+          "basis": "c1.2 returned empty metrics, empty logs at all levels, and no deploys for pricing-db. Missing ingestion would produce the same result, and migrations made outside the deploy tool would not appear.",
+          "how_to_verify": "Check the pricing-db migration and DDL audit log and confirm ingestion of its logs and metrics. Compare discount rows read by failing requests with rows read before 10:02."
+        },
+        {
+          "statement": "Rolling back v2.3.1 will restore the ~0.4% baseline.",
+          "basis": "This holds if the defect lives only in the code (h1). If v2.3.1 exposed an existing or new null in pricing-db data, a re-release could fail again until the null is handled.",
+          "how_to_verify": "After rollback, watch the error rate for 15 minutes. Review the v2.3.1 diff for fields it newly dereferences, and check how often those fields are null in pricing-db."
+        },
+        {
+          "statement": "The 94% CPU reading is a consequence of the errors, not their cause.",
+          "basis": "There is a single CPU sample at 10:06 with no baseline (confirmed in c1.1).",
+          "how_to_verify": "Pull 1-minute node_cpu_pct from 09:45 and check whether the rise precedes or follows the 10:02 deploy."
+        },
+        {
+          "statement": "The three logged NPEs are representative of all failing requests.",
+          "basis": "There are only three ERROR lines against a 23.5% error rate, log:inc01:0005 is missing, and request_rate returned no data.",
+          "how_to_verify": "Re-query the ERROR logs to recover entry 0005, and compare request-level 500 counts with the NPE count."
+        },
+        {
+          "statement": "No hidden dependency edge connects checkout-svc to search-svc or a shared cache.",
+          "basis": "Edge dependency:inc01:0003 is missing from the returned sequence.",
+          "how_to_verify": "Re-run the dependency query for checkout-svc and search-svc in both directions."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "log:inc01:0003",
+      "kind": "log",
+      "timestamp": "2026-11-10T10:04:51Z",
+      "payload": {
+        "service": "checkout-svc",
+        "level": "ERROR",
+        "message": "NullPointerException in PriceCalculator.applyDiscount (v2.3.1)"
+      }
+    },
+    {
+      "id": "log:inc01:0004",
+      "kind": "log",
+      "timestamp": "2026-11-10T10:05:07Z",
+      "payload": {
+        "service": "checkout-svc",
+        "level": "ERROR",
+        "message": "POST /checkout 500: NullPointerException in PriceCalculator.applyDiscount"
+      }
+    },
+    {
+      "id": "log:inc01:0006",
+      "kind": "log",
+      "timestamp": "2026-11-10T10:07:02Z",
+      "payload": {
+        "service": "checkout-svc",
+        "level": "ERROR",
+        "message": "POST /checkout 500: NullPointerException in PriceCalculator.applyDiscount"
+      }
+    },
+    {
+      "id": "metric:inc01:err:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-10T10:00:00Z",
+      "payload": {
+        "service": "checkout-svc",
+        "name": "error_rate_pct",
+        "value": 0.4
+      }
+    },
+    {
+      "id": "metric:inc01:cpu:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-10T10:06:00Z",
+      "payload": {
+        "service": "checkout-svc",
+        "name": "node_cpu_pct",
+        "value": 94.0
+      }
+    },
+    {
+      "id": "metric:inc01:err:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-10T10:06:00Z",
+      "payload": {
+        "service": "checkout-svc",
+        "name": "error_rate_pct",
+        "value": 23.5
+      }
+    },
+    {
+      "id": "deploy:inc01:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-10T10:02:00Z",
+      "payload": {
+        "service": "checkout-svc",
+        "version": "v2.3.1",
+        "description": "Discount engine refactor"
+      }
+    },
+    {
+      "id": "dependency:inc01:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "checkout-svc",
+        "depends_on": "payments-svc"
+      }
+    },
+    {
+      "id": "dependency:inc01:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "checkout-svc",
+        "depends_on": "pricing-db"
+      }
+    },
+    {
+      "id": "dependency:inc01:0004",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "web-frontend",
+        "depends_on": "checkout-svc"
+      }
+    },
+    {
+      "id": "config:inc01:0001",
+      "kind": "config",
+      "timestamp": "2026-11-10T09:58:00Z",
+      "payload": {
+        "service": "search-svc",
+        "key": "cache.ttl_seconds",
+        "old_value": "300",
+        "new_value": "60"
+      }
+    },
+    {
+      "id": "past:inc01:0001",
+      "kind": "past",
+      "timestamp": null,
+      "payload": {
+        "title": "Checkout latency from noisy neighbour",
+        "tags": [
+          "checkout",
+          "cpu",
+          "noisy-neighbour"
+        ],
+        "root_cause": "Co-located batch job saturated node CPU",
+        "resolution": "Moved batch job to a dedicated node pool"
+      }
+    },
+    {
+      "id": "past:inc01:0002",
+      "kind": "past",
+      "timestamp": null,
+      "payload": {
+        "title": "Checkout 500s after a pricing release",
+        "tags": [
+          "checkout",
+          "deploy",
+          "rollback"
+        ],
+        "root_cause": "Release added a null-handling bug in discount code",
+        "resolution": "Rolled back the release and added a null check"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "h1",
+      "service": "checkout-svc",
+      "category": "bad_deploy",
+      "summary": "The checkout-svc v2.3.1 'Discount engine refactor' deploy at 10:02 UTC introduced a null-handling defect in PriceCalculator.applyDiscount. The NPE makes POST /checkout return 500. This includes the interaction case the Critic raised: v2.3.1 may now dereference a discount or price field from pricing-db that was always occasionally null. In that case the code change is still the trigger. Support: the deploy precedes the first NPE (10:04:51) and the first logged 500 (10:05:07). The NPE is in v2.3.1 code. A past incident matches this pattern (a discount null bug after a release, fixed by rollback). Gaps remain. The c1.1 re-query again returned only the 10:00 (0.4%) and 10:06 (23.5%) samples, so an onset between 10:00 and 10:02 is still not excluded. The earliest error evidence is the 10:04:51 NPE, which is after the deploy. There are also only three ERROR lines against a 23.5% error rate. Next step: get 1-minute error_rate_pct for 09:45-10:10 and diff applyDiscount null handling between v2.3.1 and the prior version. Then roll back and confirm the error rate returns to the ~0.4% baseline.",
+      "supporting_ids": [
+        "deploy:inc01:0001",
+        "log:inc01:0003",
+        "log:inc01:0004",
+        "log:inc01:0006",
+        "metric:inc01:err:0001",
+        "metric:inc01:err:0002",
+        "past:inc01:0002"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.75,
+      "final_confidence": 0.75
+    },
+    {
+      "id": "h2",
+      "service": "checkout-svc",
+      "category": "capacity",
+      "summary": "Node CPU saturation, possibly from a noisy-neighbour batch job like the past incident, causes checkout requests to fail. CPU was 94% at 10:06, when errors were high. c1.1 confirmed that this is the only CPU sample, so there is no evidence on whether CPU rose before or after 10:02. Against this: every logged error is an application NPE, not a timeout or resource error, and the past noisy-neighbour incident caused latency, not 500s. Next step: pull 1-minute node_cpu_pct and request rate for 09:45-10:30, and check co-located workload scheduling.",
+      "supporting_ids": [
+        "metric:inc01:cpu:0001",
+        "past:inc01:0001",
+        "metric:inc01:err:0002"
+      ],
+      "contradicting_ids": [
+        "log:inc01:0003",
+        "log:inc01:0004",
+        "log:inc01:0006",
+        "deploy:inc01:0001"
+      ],
+      "proposed_confidence": 0.08,
+      "final_confidence": 0.08
+    },
+    {
+      "id": "h3",
+      "service": "pricing-db",
+      "category": "dependency_failure",
+      "summary": "pricing-db, a direct checkout dependency, started returning null or missing discount or price records (for example after a data change or a schema migration done outside the deploy tool). applyDiscount then dereferences the null and throws an NPE. If this is the cause, a rollback alone may not restore baseline. c1.2 queried pricing-db, and every result came back empty: metrics, logs at all levels, and scoped deploys. Empty is not the same as healthy, because missing ingestion looks identical. Migrations made outside the deploy pipeline would not appear either. So h3 is neither confirmed nor refuted. Weighing against it: the NPE names v2.3.1 code, and a checkout-svc code change sits right before the first error. Next step: check pricing-db migration and DDL audit history, confirm pricing-db logs and metrics are being ingested, and inspect the discount rows involved in the failing requests.",
+      "supporting_ids": [
+        "dependency:inc01:0002",
+        "past:inc01:0002",
+        "log:inc01:0003"
+      ],
+      "contradicting_ids": [
+        "deploy:inc01:0001",
+        "log:inc01:0004",
+        "log:inc01:0006"
+      ],
+      "proposed_confidence": 0.1,
+      "final_confidence": 0.1
+    },
+    {
+      "id": "h4",
+      "service": "search-svc",
+      "category": "config_change",
+      "summary": "The search-svc cache.ttl_seconds change from 300 to 60 at 09:58 UTC raised load on a shared component and indirectly broke checkout. This is unlikely. search-svc has no edge to checkout-svc or pricing-db in the returned graph, and the errors are discount-code NPEs, not cache or load failures. The missing dependency:inc01:0003 edge leaves a small chance of an unseen path.",
+      "supporting_ids": [
+        "config:inc01:0001"
+      ],
+      "contradicting_ids": [
+        "dependency:inc01:0001",
+        "dependency:inc01:0002",
+        "dependency:inc01:0004",
+        "log:inc01:0003",
+        "log:inc01:0004"
+      ],
+      "proposed_confidence": 0.03,
+      "final_confidence": 0.03
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "past_incidents",
+      "reason": "partial result: 1 of 2 rows missing",
+      "service": null,
+      "affects_hypotheses": [],
+      "task_id": "t3"
+    },
+    {
+      "id": "gap:2",
+      "tool": "metrics",
+      "reason": "timeout after 3 attempts",
+      "service": "checkout-svc",
+      "affects_hypotheses": [],
+      "task_id": "c1.1"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1",
+    "gap:2"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 22,
+    "llm_calls": 33,
+    "tokens_in": 86403,
+    "tokens_out": 26550,
+    "cache_tokens": 0,
+    "llm_latency_s": 185.93
+  },
+  "trace": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:40:09.412587Z",
+      "ended_at": "2026-11-13T06:40:38.868853Z",
+      "status": "done",
+      "tool_calls": 5,
+      "llm_calls": 6
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:40:09.415209Z",
+      "ended_at": "2026-11-13T06:40:26.077659Z",
+      "status": "done",
+      "tool_calls": 3,
+      "llm_calls": 4
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "wave": 0,
+      "started_at": "2026-11-13T06:40:09.416668Z",
+      "ended_at": "2026-11-13T06:40:24.031193Z",
+      "status": "done",
+      "tool_calls": 3,
+      "llm_calls": 4
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "wave": 1,
+      "started_at": "2026-11-13T06:40:38.870115Z",
+      "ended_at": "2026-11-13T06:41:04.808212Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 1
+    },
+    {
+      "task_id": "c1.1",
+      "agent": "observability",
+      "wave": 2,
+      "started_at": "2026-11-13T06:41:18.661311Z",
+      "ended_at": "2026-11-13T06:41:36.483473Z",
+      "status": "done",
+      "tool_calls": 5,
+      "llm_calls": 6
+    },
+    {
+      "task_id": "c1.2",
+      "agent": "observability",
+      "wave": 2,
+      "started_at": "2026-11-13T06:41:18.663132Z",
+      "ended_at": "2026-11-13T06:41:45.859586Z",
+      "status": "done",
+      "tool_calls": 6,
+      "llm_calls": 7
+    },
+    {
+      "task_id": "c1.r",
+      "agent": "reasoning",
+      "wave": 3,
+      "started_at": "2026-11-13T06:41:45.861151Z",
+      "ended_at": "2026-11-13T06:42:10.129913Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 1
+    }
+  ],
+  "critic_loops": 1,
+  "critic_reviews": [
+    {
+      "loop": 1,
+      "critique": "h1 is well supported. A checkout-svc v2.3.1 'Discount engine refactor' deploy at 10:02 is followed by an NPE in v2.3.1 PriceCalculator.applyDiscount at 10:04:51 and by 500s on POST /checkout. Error rate went from 0.4% at 10:00 to 23.5% at 10:06, and a past incident followed the same pattern. h4 (search-svc TTL) has no dependency path and fails to explain an NPE in discount code, so it can stay low. Three things are weaker than the ranking implies.\n\n1. **Onset timing.** The error-rate metric has only two samples, 10:00 and 10:06. An onset before 10:02 cannot be excluded, and that would break the deploy causality. The CPU reading is also a single sample at 10:06, so h2's 'CPU is a side effect' claim is assumed, not shown. A 1-minute series would settle both questions.\n\n2. **The pricing-db alternative (h3) was never tested.** An NPE in applyDiscount is exactly what you would see if pricing-db started returning null or missing discount rows. The deploy and the data change could also interact: v2.3.1 dereferencing a field that was always occasionally null. pricing-db logs, metrics and schema or migration changes were never queried. Absence of pricing-db references in checkout logs is weak evidence, because an NPE on a null row would not name the DB. Rollback is still a reasonable mitigation either way. However, if pricing-db data changed, rollback alone may not restore the baseline, or a later re-release would fail again.\n\n3. **Smaller evidence gaps.** These are lower priority and unlikely to change the ranking unless the first two checks surprise:\n- log:inc01:0005 is missing.\n- dependency:inc01:0003 is missing.\n- Three ERROR lines against a 23.5% error rate.",
+      "follow_ups": [
+        {
+          "agent": "observability",
+          "goal": "Establish exact onset ordering. Pull checkout-svc error_rate_pct and node_cpu_pct at 1-minute resolution, plus request rate if available. Confirm that errors stay at the ~0.4% baseline until after the 10:02 v2.3.1 deploy. Check whether CPU rises only after the error spike or was already elevated before 10:02.",
+          "params": {
+            "service": "checkout-svc",
+            "start": "2026-11-10T09:45:00Z",
+            "end": "2026-11-10T10:30:00Z",
+            "metrics": [
+              "error_rate_pct",
+              "node_cpu_pct",
+              "request_rate"
+            ],
+            "resolution": "1m"
+          }
+        },
+        {
+          "agent": "observability",
+          "goal": "Test h3. Pull pricing-db error and latency metrics, ERROR/WARN logs, and any deploy, config, schema or migration changes. Determine whether pricing-db began returning null, missing or errored discount or price records around 10:00-10:05, independent of the checkout-svc deploy.",
+          "params": {
+            "service": "pricing-db",
+            "start": "2026-11-10T09:45:00Z",
+            "end": "2026-11-10T10:30:00Z",
+            "signals": [
+              "logs",
+              "metrics",
+              "deploys"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "loop": 2,
+      "critique": "h1 holds up and should stay on top. Five points support this.\n\n1. **Timing and code path.** The v2.3.1 'Discount engine refactor' deploy at 10:02 comes before every piece of error evidence. Three ERROR lines from the full-window query are all the same NPE in PriceCalculator.applyDiscount, they name v2.3.1 code, and the earliest is at 10:04:51. Nothing was logged at ERROR before 10:02. The code path matches the deploy's stated scope.\n2. **Precedent.** The match with past:inc01:0002 (discount null bug after a release, fixed by rollback) is strong.\n3. **Onset between 10:00 and 10:02.** This gap is real. But c1.1 already re-queried and got the same sparse samples, so another metrics pull will most likely fail the same way. It would spend most of the remaining 8 tool calls for little value. Even if an onset at 10:01 were somehow shown, an NPE in v2.3.1-only code could not come from the prior version. The ordering argument therefore rests on the code path, not just on the metric samples.\n4. **The missing log:inc01:0005.** By sequence it falls between 10:05:07 and 10:07:02. That is after the deploy, so it cannot move the onset. The 3-lines-versus-23.5% mismatch looks like sampled or deduplicated logging, not evidence of a second failure mode.\n5. **Competing hypotheses.**\n   - **h2 (CPU).** Correctly ranked low. The errors are application NPEs, not timeouts, and the noisy-neighbour precedent produced latency, not 500s.\n   - **h4 (search-svc).** Correctly ranked low. It has no graph path and its failure signature does not match.\n   - **h3 (pricing-db).** This is the only competitor that matters. It is mostly absorbed into h1 as the interaction case: the code change is still the trigger even if the null data is old. pricing-db returned empty results everywhere, and that cannot be resolved with the tools available, since the deploy tool does not see DDL audit or migrations.\n\nThe practical consequence of h3 is already captured in the remediation plan. Roll back, then confirm the error rate returns to about 0.4%. If it does not, pricing-db data becomes the lead. That rollback is itself the decisive test, and it is cheaper and more conclusive than any query left in the budget.\n\nOne remaining recommendation is to keep confidence near 0.75 rather than raise it. The onset gap and pricing-db's empty telemetry are not closed, and the rollback outcome should be reported as confirmation. No further investigation is likely to change the ranking.",
+      "follow_ups": []
+    }
+  ],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc01",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "checkout-svc",
+        "category": "bad_deploy",
+        "summary": "The checkout-svc v2.3.1 'Discount engine refactor' deploy at 10:02 UTC introduced a null-handling defect in PriceCalculator.applyDiscount. The NPE makes POST /checkout return 500. This includes the interaction case the Critic raised: v2.3.1 may now dereference a discount or price field from pricing-db that was always occasionally null. In that case the code change is still the trigger. Support: the deploy precedes the first NPE (10:04:51) and the first logged 500 (10:05:07). The NPE is in v2.3.1 code. A past incident matches this pattern (a discount null bug after a release, fixed by rollback). Gaps remain. The c1.1 re-query again returned only the 10:00 (0.4%) and 10:06 (23.5%) samples, so an onset between 10:00 and 10:02 is still not excluded. The earliest error evidence is the 10:04:51 NPE, which is after the deploy. There are also only three ERROR lines against a 23.5% error rate. Next step: get 1-minute error_rate_pct for 09:45-10:10 and diff applyDiscount null handling between v2.3.1 and the prior version. Then roll back and confirm the error rate returns to the ~0.4% baseline.",
+        "supporting_ids": [
+          "deploy:inc01:0001",
+          "log:inc01:0003",
+          "log:inc01:0004",
+          "log:inc01:0006",
+          "metric:inc01:err:0001",
+          "metric:inc01:err:0002",
+          "past:inc01:0002"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.75,
+        "final_confidence": 0.75
+      },
+      {
+        "id": "h3",
+        "service": "pricing-db",
+        "category": "dependency_failure",
+        "summary": "pricing-db, a direct checkout dependency, started returning null or missing discount or price records (for example after a data change or a schema migration done outside the deploy tool). applyDiscount then dereferences the null and throws an NPE. If this is the cause, a rollback alone may not restore baseline. c1.2 queried pricing-db, and every result came back empty: metrics, logs at all levels, and scoped deploys. Empty is not the same as healthy, because missing ingestion looks identical. Migrations made outside the deploy pipeline would not appear either. So h3 is neither confirmed nor refuted. Weighing against it: the NPE names v2.3.1 code, and a checkout-svc code change sits right before the first error. Next step: check pricing-db migration and DDL audit history, confirm pricing-db logs and metrics are being ingested, and inspect the discount rows involved in the failing requests.",
+        "supporting_ids": [
+          "dependency:inc01:0002",
+          "past:inc01:0002",
+          "log:inc01:0003"
+        ],
+        "contradicting_ids": [
+          "deploy:inc01:0001",
+          "log:inc01:0004",
+          "log:inc01:0006"
+        ],
+        "proposed_confidence": 0.1,
+        "final_confidence": 0.1
+      },
+      {
+        "id": "h2",
+        "service": "checkout-svc",
+        "category": "capacity",
+        "summary": "Node CPU saturation, possibly from a noisy-neighbour batch job like the past incident, causes checkout requests to fail. CPU was 94% at 10:06, when errors were high. c1.1 confirmed that this is the only CPU sample, so there is no evidence on whether CPU rose before or after 10:02. Against this: every logged error is an application NPE, not a timeout or resource error, and the past noisy-neighbour incident caused latency, not 500s. Next step: pull 1-minute node_cpu_pct and request rate for 09:45-10:30, and check co-located workload scheduling.",
+        "supporting_ids": [
+          "metric:inc01:cpu:0001",
+          "past:inc01:0001",
+          "metric:inc01:err:0002"
+        ],
+        "contradicting_ids": [
+          "log:inc01:0003",
+          "log:inc01:0004",
+          "log:inc01:0006",
+          "deploy:inc01:0001"
+        ],
+        "proposed_confidence": 0.08,
+        "final_confidence": 0.08
+      },
+      {
+        "id": "h4",
+        "service": "search-svc",
+        "category": "config_change",
+        "summary": "The search-svc cache.ttl_seconds change from 300 to 60 at 09:58 UTC raised load on a shared component and indirectly broke checkout. This is unlikely. search-svc has no edge to checkout-svc or pricing-db in the returned graph, and the errors are discount-code NPEs, not cache or load failures. The missing dependency:inc01:0003 edge leaves a small chance of an unseen path.",
+        "supporting_ids": [
+          "config:inc01:0001"
+        ],
+        "contradicting_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002",
+          "dependency:inc01:0004",
+          "log:inc01:0003",
+          "log:inc01:0004"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "checkout-svc deployed v2.3.1 (\"Discount engine refactor\") at 2026-11-10T10:02:00Z.",
+        "evidence_ids": [
+          "deploy:inc01:0001"
+        ]
+      },
+      {
+        "statement": "The first ERROR log in the window is a NullPointerException in PriceCalculator.applyDiscount (v2.3.1) at 2026-11-10T10:04:51Z.",
+        "evidence_ids": [
+          "log:inc01:0003"
+        ]
+      },
+      {
+        "statement": "The first logged POST /checkout 500 caused by NullPointerException in PriceCalculator.applyDiscount is at 2026-11-10T10:05:07Z, and another identical 500 is logged at 2026-11-10T10:07:02Z.",
+        "evidence_ids": [
+          "log:inc01:0004",
+          "log:inc01:0006"
+        ]
+      },
+      {
+        "statement": "checkout-svc error_rate_pct was 0.4 at 2026-11-10T10:00:00Z and 23.5 at 2026-11-10T10:06:00Z.",
+        "evidence_ids": [
+          "metric:inc01:err:0001",
+          "metric:inc01:err:0002"
+        ]
+      },
+      {
+        "statement": "checkout-svc node_cpu_pct was 94.0 at 2026-11-10T10:06:00Z.",
+        "evidence_ids": [
+          "metric:inc01:cpu:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc's downstream dependencies in the service graph are payments-svc and pricing-db.",
+        "evidence_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002"
+        ]
+      },
+      {
+        "statement": "The returned ERROR logs for checkout-svc in the window contain only NullPointerException failures in PriceCalculator.applyDiscount; none of the returned error lines reference payments-svc or pricing-db.",
+        "evidence_ids": [
+          "log:inc01:0003",
+          "log:inc01:0004",
+          "log:inc01:0006"
+        ]
+      },
+      {
+        "statement": "checkout-svc deployed v2.3.1 (description: 'Discount engine refactor') at 2026-11-10T10:02:00Z, about 3 minutes before the reported 10:05 UTC error onset.",
+        "evidence_ids": [
+          "deploy:inc01:0001"
+        ]
+      },
+      {
+        "statement": "search-svc had a config change at 2026-11-10T09:58:00Z: cache.ttl_seconds changed from 300 to 60. This lands about 7 minutes before onset.",
+        "evidence_ids": [
+          "config:inc01:0001"
+        ]
+      },
+      {
+        "statement": "The dependency graph lists checkout-svc as depending on payments-svc and pricing-db, and web-frontend as depending on checkout-svc.",
+        "evidence_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002",
+          "dependency:inc01:0004"
+        ]
+      },
+      {
+        "statement": "search-svc does not appear in the returned dependency edges for checkout-svc, so the search-svc config change is not on a direct dependency path in this graph.",
+        "evidence_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002",
+          "dependency:inc01:0004",
+          "config:inc01:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc calls payments-svc (downstream dependency).",
+        "evidence_ids": [
+          "dependency:inc01:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc calls pricing-db (downstream dependency).",
+        "evidence_ids": [
+          "dependency:inc01:0002"
+        ]
+      },
+      {
+        "statement": "web-frontend calls checkout-svc (upstream caller of checkout-svc).",
+        "evidence_ids": [
+          "dependency:inc01:0004"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'Checkout latency from noisy neighbour' had root cause: a co-located batch job saturated node CPU, resolved by moving the batch job to a dedicated node pool.",
+        "evidence_ids": [
+          "past:inc01:0001"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'Checkout 500s after a pricing release' had root cause: a release added a null-handling bug in the discount code, resolved by rolling back the release and adding a null check.",
+        "evidence_ids": [
+          "past:inc01:0002"
+        ]
+      },
+      {
+        "statement": "The first past_incidents query returned partial results (1 of 2 rows missing); the second query with tags checkout and payment returned both rows and closed that gap.",
+        "evidence_ids": [
+          "past:inc01:0001",
+          "past:inc01:0002"
+        ]
+      },
+      {
+        "statement": "checkout-svc error_rate_pct was 0.4% at 10:00:00Z.",
+        "evidence_ids": [
+          "metric:inc01:err:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc error_rate_pct was 23.5% at 10:06:00Z.",
+        "evidence_ids": [
+          "metric:inc01:err:0002"
+        ]
+      },
+      {
+        "statement": "checkout-svc node_cpu_pct was 94.0% at 10:06:00Z.",
+        "evidence_ids": [
+          "metric:inc01:cpu:0001"
+        ]
+      },
+      {
+        "statement": "A checkout-svc deploy of v2.3.1 (description: 'Discount engine refactor') occurred at 10:02:00Z.",
+        "evidence_ids": [
+          "deploy:inc01:0001"
+        ]
+      },
+      {
+        "statement": "The dependency graph shows checkout-svc depends on pricing-db. This is the only pricing-db edge returned, so the query shows no other upstream or downstream pricing-db relationships.",
+        "evidence_ids": [
+          "dependency:inc01:0002"
+        ]
+      },
+      {
+        "statement": "checkout-svc deployed v2.3.1 at 2026-11-10T10:02:00Z with the description 'Discount engine refactor'. This is about 2-5 minutes after the 10:00-10:05 window the hypothesis names and inside the incident window.",
+        "evidence_ids": [
+          "deploy:inc01:0001"
+        ]
+      },
+      {
+        "statement": "A config change was recorded for search-svc at 2026-11-10T09:58:00Z, setting cache.ttl_seconds from 300 to 60. The dependency query returned no edge between search-svc and pricing-db, so this change is not linked to pricing-db in the data gathered.",
+        "evidence_ids": [
+          "config:inc01:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The error-rate onset is between 10:00 and 10:06 UTC, and the first NPE log at 10:04:51 is consistent with the ~10:05 onset in the report.",
+        "basis": "Metric samples are sparse (10:00 and 10:06 only), so the exact onset minute cannot be read from metrics alone.",
+        "how_to_verify": "Pull error_rate_pct at 1-minute resolution for 10:00-10:10 and compare with the first NPE timestamp."
+      },
+      {
+        "statement": "The v2.3.1 deploy at 10:02 is the trigger for the NPE spike.",
+        "basis": "Temporal ordering (deploy 10:02, first NPE 10:04:51, error-rate jump by 10:06) and the NPE message naming v2.3.1 code. This is correlation plus a plausible code path, not a confirmed cause.",
+        "how_to_verify": "Diff v2.3.1 against the prior version for applyDiscount null handling; check whether reverting to the prior version clears the NPE; check for a null input (e.g., a discount or price record) that v2.3.1 newly dereferences."
+      },
+      {
+        "statement": "The CPU spike (94%) is a side effect of errors or retries, not a cause of the 500s.",
+        "basis": "Single CPU sample at 10:06 with no baseline or saturation trend returned.",
+        "how_to_verify": "Pull node_cpu_pct and request-rate metrics for 09:45-10:30 and check whether CPU rises after the deploy or after the error spike."
+      },
+      {
+        "statement": "The downstream services payments-svc and pricing-db are not implicated.",
+        "basis": "No error logs from checkout-svc referencing them were returned. Their own logs and metrics were not queried, so this is an absence of evidence.",
+        "how_to_verify": "Query logs and error metrics for payments-svc and pricing-db over 09:45-10:30 and check for timeouts or 5xx responses."
+      },
+      {
+        "statement": "Latency and saturation metrics beyond CPU, and stack traces, are not available in this data.",
+        "basis": "The unfiltered metrics call returned only error_rate_pct and node_cpu_pct. Log payloads contain messages only, with no stack traces.",
+        "how_to_verify": "Query p50/p99 latency, memory, and thread or connection pool metrics by name, and fetch full log entries (or traces) for the NPE events."
+      },
+      {
+        "statement": "The log stream may be incomplete. Evidence IDs jump from log:inc01:0004 to 0006, and the WARN query returned no rows.",
+        "basis": "The ERROR query returned three entries with omitted=0, which leaves a missing ID (0005) unexplained. The WARN query returned an empty evidence list with no error status.",
+        "how_to_verify": "Re-run the ERROR query for the same window and check whether an entry with ID 0005 appears; confirm the logging pipeline has no drops for checkout-svc."
+      },
+      {
+        "statement": "Error logs in this window only show NPEs; other 500 causes may exist without logged errors.",
+        "basis": "Only three ERROR entries were returned and all are the same NPE. The 23.5% error rate suggests more failing requests than the logs show.",
+        "how_to_verify": "Compare request-level 500 counts with the logged error count, and check access logs or traces for 500 responses without a matching ERROR line."
+      },
+      {
+        "statement": "No deploys or config changes to payments-svc occurred between 09:45 and 10:30 UTC.",
+        "basis": "The payments-svc-scoped deploys query returned an empty evidence list with status ok. No evidence ID exists for an empty result, so this is an inference from absence.",
+        "how_to_verify": "Check the payments-svc change history directly, including config and feature-flag systems, for 09:45-10:30 UTC."
+      },
+      {
+        "statement": "pricing-db had no deploys or config changes in the window.",
+        "basis": "The all-services deploys query returned only the search-svc config change and the checkout-svc deploy. Absence of pricing-db entries is inferred, not directly shown.",
+        "how_to_verify": "Query pricing-db infra and config change logs (e.g., DB parameter, schema, or migration changes) for 09:45-10:30 UTC."
+      },
+      {
+        "statement": "The v2.3.1 deploy at 10:02 UTC is the most likely trigger of the checkout errors.",
+        "basis": "Timing: the deploy precedes the 10:05 onset by 3 minutes, and it is the only checkout-svc change in the window. Causation is not established by the change records alone.",
+        "how_to_verify": "Compare checkout-svc 5xx rate and error logs before and after 10:02 UTC; check whether errors cluster on discount-related code paths; consider rolling back or canary-disabling v2.3.1 in a test environment."
+      },
+      {
+        "statement": "Feature-flag flips and infrastructure changes were not checked.",
+        "basis": "The deploys tool covers only deploys and config changes. No available tool returns feature flags or infra changes, so those signals are unverified for checkout-svc, payments-svc, and pricing-db.",
+        "how_to_verify": "Pull feature-flag audit logs and infra change records (IaC/Terraform applies, scaling events, network changes) for the three services over 09:45-10:30 UTC."
+      },
+      {
+        "statement": "The dependency result may be incomplete.",
+        "basis": "Evidence IDs run dependency:inc01:0001, 0002, 0004, and 0003 is absent. The tool reported omitted:0, so the missing edge may be a gap in the response, not a true absence.",
+        "how_to_verify": "Re-run the dependencies query for checkout-svc with direction 'both', or check the service graph directly for the missing edge."
+      },
+      {
+        "statement": "The search-svc config change is probably unrelated to the checkout failures.",
+        "basis": "search-svc is not a listed dependency of checkout-svc, though it could be indirectly involved through shared caches or upstream calls not in this graph.",
+        "how_to_verify": "Check whether checkout-svc or payments-svc calls search-svc indirectly, and whether checkout error logs reference cache or search behavior."
+      },
+      {
+        "statement": "checkout-svc's dependency list is complete for direct edges. The inventory and cache dependencies named in the task were not returned.",
+        "basis": "The dependencies result contains only three edges (IDs 0001, 0002, 0004) and no inventory or cache edges. Edge ID 0003 is absent from the sequence, which may indicate a missing edge.",
+        "how_to_verify": "Re-query dependencies for checkout-svc with direction 'downstream', and for payments-svc and pricing-db, to check for additional edges and whether edge 0003 exists."
+      },
+      {
+        "statement": "The depth-2 transitive map is not established. Only direct edges were returned, so dependencies of payments-svc and pricing-db are unknown.",
+        "basis": "The dependencies call used the default single-level result and no depth parameter was honoured in the output.",
+        "how_to_verify": "Run dependencies on payments-svc and pricing-db (downstream) to extend the graph to depth 2."
+      },
+      {
+        "statement": "Neither payments-svc nor pricing-db is confirmed as the source of the HTTP 500s. The dependency edges show only topology, not health.",
+        "basis": "The dependency tool returns graph edges with no status or error data.",
+        "how_to_verify": "Pull logs and metrics (error rate, latency) for payments-svc and pricing-db in the 09:45 to 10:30 UTC window, and check deploys for those services."
+      },
+      {
+        "statement": "The past pricing-release incident may be relevant only if a recent pricing or discount change occurred. This is unconfirmed.",
+        "basis": "Past incident past:inc01:0002 shows a discount-code null-handling bug in a release, and pricing-db is a checkout dependency.",
+        "how_to_verify": "Query deploys for pricing-related services and checkout-svc from about 09:00 to 10:05 UTC on 2026-11-10."
+      },
+      {
+        "statement": "The three logged NPE errors represent the bulk of the 23.5% failing requests.",
+        "basis": "Only three ERROR lines were returned, all the same NPE, while the error rate implies many more failures. Log ID 0005 is missing from the sequence.",
+        "how_to_verify": "Compare request-level 500 counts with ERROR log counts, and inspect access logs or traces for 500s without NPE lines. Re-query to recover log:inc01:0005."
+      },
+      {
+        "statement": "payments-svc and pricing-db had no changes or failures in the window.",
+        "basis": "This rests on absence of evidence. Their deploys returned empty, and their logs and metrics were never queried.",
+        "how_to_verify": "Pull payments-svc and pricing-db logs, error and latency metrics, and change history (including feature flags and schema migrations) for 09:45-10:30 UTC."
+      },
+      {
+        "statement": "The 94% CPU reading is a consequence of the error spike, not its cause.",
+        "basis": "There is a single CPU sample at 10:06 with no baseline.",
+        "how_to_verify": "Get 1-minute node_cpu_pct from 09:45 and check whether the CPU rise precedes or follows the 10:02 deploy and the first NPE."
+      },
+      {
+        "statement": "The dependency graph is complete for checkout-svc.",
+        "basis": "Edge ID dependency:inc01:0003 is missing from the returned sequence, so an edge (possibly to search-svc or a cache) may have been omitted.",
+        "how_to_verify": "Re-run the dependency query for checkout-svc in both directions and inspect the service graph directly."
+      },
+      {
+        "statement": "No feature flag flipped for discount or pricing logic in the window.",
+        "basis": "No tool covering feature flags or infra changes was queried.",
+        "how_to_verify": "Review feature-flag audit logs and infra change records for checkout-svc, payments-svc, and pricing-db over 09:45-10:30 UTC."
+      },
+      {
+        "statement": "The error rate was at baseline (about 0.4%) until after the 10:02 v2.3.1 deploy, as the task expects.",
+        "basis": "Only one pre-deploy error_rate_pct sample exists (10:00, 0.4%). There is no sample between 10:00 and 10:06, so the 10:02 boundary cannot be confirmed from metrics.",
+        "how_to_verify": "Re-query error_rate_pct for checkout-svc at 1m resolution over 09:45 to 10:10Z and find the first minute the value rises above baseline."
+      },
+      {
+        "statement": "CPU was not elevated before 10:02, so the CPU rise followed the error spike or the deploy rather than preceding them.",
+        "basis": "The only node_cpu_pct sample is 94.0% at 10:06. No CPU value exists before 10:06, so there is no evidence either way for 10:00 to 10:06.",
+        "how_to_verify": "Retrieve node_cpu_pct at 1m resolution for 09:45 to 10:10Z and compare its rise time with the error-rate onset and the 10:02 deploy."
+      },
+      {
+        "statement": "Request rate is unavailable for this window, so the error ratio cannot be cross-checked against traffic.",
+        "basis": "The request_rate metric query returned status ok with zero evidence rows. The first full metrics call (no name filter) timed out after 3 attempts (gap:2), and the error_rate_pct and node_cpu_pct queries returned only a few sparse samples rather than 1-minute series.",
+        "how_to_verify": "Confirm the request_rate metric name exists for checkout-svc and re-query it. Retry the unfiltered metrics call, or query each metric individually at 1m resolution."
+      },
+      {
+        "statement": "The onset of errors is not yet resolved to the minute and no error-log evidence has been collected.",
+        "basis": "Metric samples are at roughly 6-minute spacing (10:00, 10:06), not the requested 1-minute resolution. Log evidence has not been pulled.",
+        "how_to_verify": "Query checkout-svc logs at level ERROR (and WARN) for 10:00 to 10:08Z to find the first failing request and its timestamp relative to the 10:02 deploy."
+      },
+      {
+        "statement": "pricing-db had no metric samples in the window (name=null), so h3 cannot be confirmed or refuted from metrics: no error or latency data for pricing-db was observed at 09:45-10:30Z.",
+        "basis": "The metrics call returned status ok with an empty evidence list, omitted=0 and no closes_gaps. Empty results are not the same as a healthy service.",
+        "how_to_verify": "Re-query pricing-db metrics for the window, check that the metrics pipeline ingested data for pricing-db, and check that the service emits metrics under this name."
+      },
+      {
+        "statement": "pricing-db logs contain no ERROR or WARN entries and no entries at any level in the window, so the logs do not show null, missing or errored discount or price records.",
+        "basis": "Both logs calls (level=ERROR and level=null) returned status ok with empty evidence lists. Missing log ingestion would produce the same result.",
+        "how_to_verify": "Confirm pricing-db is logging and shipping to the log store by checking a wider time range or a known-active period, then re-run the ERROR query."
+      },
+      {
+        "statement": "pricing-db had no deploys or config or schema or migration changes in the window, which would rule out a change on pricing-db itself.",
+        "basis": "The pricing-db-scoped deploys call returned ok with no evidence. The all-services deploys call returned only checkout-svc and search-svc changes, with nothing for pricing-db. Changes recorded outside the deploy tool (for example direct schema migrations) would not appear here.",
+        "how_to_verify": "Check the pricing-db migration history and DDL audit log for 09:45-10:30Z, and confirm the deploy tool covers pricing-db's release pipeline."
+      },
+      {
+        "statement": "The v2.3.1 'Discount engine refactor' in checkout-svc may have changed how checkout-svc reads or interprets discount data from pricing-db, which would produce checkout 500s even if pricing-db is healthy.",
+        "basis": "Timing (10:02Z, before the 10:05 error onset in the symptoms) and the description. The refactor's scope is not in the evidence, and the dependency edge is the only link between the two services.",
+        "how_to_verify": "Diff v2.3.1 against the prior version for pricing-db client calls and response handling. Compare checkout-svc 500 stack traces for null or missing-field errors, and check whether the error rate starts at the v2.3.1 rollout time."
+      },
+      {
+        "statement": "The search-svc cache TTL change at 09:58Z is unlikely to explain checkout failures because the graph shows no search-svc to pricing-db or checkout-svc path.",
+        "basis": "Absence of edges in the dependency query, which returned only checkout-svc to pricing-db for pricing-db. Search-svc's own edges were not queried.",
+        "how_to_verify": "Query dependencies for checkout-svc and search-svc directly to confirm whether search-svc is in checkout's call path."
+      },
+      {
+        "statement": "The error-rate onset came after the 10:02 deploy.",
+        "basis": "The c1.1 re-query again returned only the 10:00 (0.4%) and 10:06 (23.5%) samples. The earliest error evidence is the NPE at 10:04:51. An onset between 10:00 and 10:02 is not excluded.",
+        "how_to_verify": "Retrieve error_rate_pct at 1-minute resolution for 09:45-10:10, or count 500s per minute from access logs, and find the first minute above baseline."
+      },
+      {
+        "statement": "pricing-db is healthy and its data did not change in the window.",
+        "basis": "c1.2 returned empty metrics, empty logs at all levels, and no deploys for pricing-db. Missing ingestion would produce the same result, and migrations made outside the deploy tool would not appear.",
+        "how_to_verify": "Check the pricing-db migration and DDL audit log and confirm ingestion of its logs and metrics. Compare discount rows read by failing requests with rows read before 10:02."
+      },
+      {
+        "statement": "Rolling back v2.3.1 will restore the ~0.4% baseline.",
+        "basis": "This holds if the defect lives only in the code (h1). If v2.3.1 exposed an existing or new null in pricing-db data, a re-release could fail again until the null is handled.",
+        "how_to_verify": "After rollback, watch the error rate for 15 minutes. Review the v2.3.1 diff for fields it newly dereferences, and check how often those fields are null in pricing-db."
+      },
+      {
+        "statement": "The 94% CPU reading is a consequence of the errors, not their cause.",
+        "basis": "There is a single CPU sample at 10:06 with no baseline (confirmed in c1.1).",
+        "how_to_verify": "Pull 1-minute node_cpu_pct from 09:45 and check whether the rise precedes or follows the 10:02 deploy."
+      },
+      {
+        "statement": "The three logged NPEs are representative of all failing requests.",
+        "basis": "There are only three ERROR lines against a 23.5% error rate, log:inc01:0005 is missing, and request_rate returned no data.",
+        "how_to_verify": "Re-query the ERROR logs to recover entry 0005, and compare request-level 500 counts with the NPE count."
+      },
+      {
+        "statement": "No hidden dependency edge connects checkout-svc to search-svc or a shared cache.",
+        "basis": "Edge dependency:inc01:0003 is missing from the returned sequence.",
+        "how_to_verify": "Re-run the dependency query for checkout-svc and search-svc in both directions."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Roll back checkout-svc from v2.3.1 to the prior version and confirm checkout error rate returns to the roughly 0.4% baseline.",
+        "rationale": "h1 is the highest-confidence hypothesis (0.75). The NPE is in v2.3.1 code, it follows the 10:02 deploy, and a past incident with the same pattern was fixed by rollback. Verify the error rate after rollback to confirm the fix.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Pull 1-minute error_rate_pct for checkout-svc from 09:45 to 10:10 UTC to pin the error onset relative to the 10:02 deploy.",
+        "rationale": "The current samples (10:00 at 0.4% and 10:06 at 23.5%) do not exclude an onset between 10:00 and 10:02, and the earliest error evidence is the 10:04:51 NPE. A precise onset strengthens or weakens the deploy link.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Diff applyDiscount null handling between v2.3.1 and the prior release, and check for any unguarded dereference of discount or price fields.",
+        "rationale": "Locating the specific code path that throws the NPE confirms the defect and identifies the field that is null, which tests whether the trigger is the code change or a null data value.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Verify that pricing-db logs and metrics are being ingested for the incident window, since the empty results may reflect missing ingestion rather than health.",
+        "rationale": "h3 is currently neither confirmed nor refuted because all pricing-db queries came back empty. Confirming ingestion is required before pricing-db can be ruled out.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "Check pricing-db migration and DDL audit history for changes made outside the deploy pipeline around 09:45 to 10:05 UTC, and inspect the discount rows used by the failing requests for nulls.",
+        "rationale": "If pricing-db returned null or missing discount or price records, a rollback alone may not restore baseline. This check determines whether a data-side fix is also needed.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "Pull 1-minute node_cpu_pct and request rate for checkout nodes from 09:45 to 10:30 UTC, and review co-located batch workload scheduling.",
+        "rationale": "The only CPU sample (94% at 10:06) cannot show whether CPU rose before or after the deploy. Timing data is needed to test whether capacity contributed.",
+        "hypothesis_id": "h2"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 22,
+      "llm_calls": 33,
+      "tokens_in": 86403,
+      "tokens_out": 26550,
+      "cache_tokens": 0,
+      "latency_s": 151.027
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "past_incidents gap in t3: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in c1.1: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  }
+}

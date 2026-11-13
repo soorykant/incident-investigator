@@ -1,0 +1,1827 @@
+{
+  "incident_id": "inc04",
+  "incident": {
+    "title": "Image uploads failing in waves",
+    "symptoms": [
+      "About 25% of image upload requests fail with HTTP 502 since about 03:20 UTC",
+      "Failures come in bursts a few minutes apart",
+      "Already-uploaded images still display"
+    ],
+    "affected_service": "image-resizer",
+    "window_start": "2026-11-13T02:45:00Z",
+    "window_end": "2026-11-13T04:00:00Z",
+    "severity": "SEV3"
+  },
+  "started_at": "2026-11-13T06:48:46.447479Z",
+  "tasks": [
+    {
+      "id": "t1",
+      "agent": "observability",
+      "goal": "Pull image-resizer error logs and metrics for the window. Look at the 502 rate, latency, and pod restarts, OOM kills, CPU and memory. Find what timed bursts of failures every few minutes starting around 03:20 UTC.",
+      "params": {
+        "service": "image-resizer",
+        "window_start": "2026-11-13T02:45:00Z",
+        "window_end": "2026-11-13T04:00:00Z",
+        "signals": [
+          "http_5xx_rate",
+          "latency_p99",
+          "pod_restarts",
+          "oom_kills",
+          "cpu",
+          "memory"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t2",
+      "agent": "observability",
+      "goal": "List deploys, config changes, autoscaling events and scheduled jobs affecting image-resizer or its upstream gateway/load balancer between 02:45 and 03:30 UTC.",
+      "params": {
+        "service": "image-resizer",
+        "window_start": "2026-11-13T02:45:00Z",
+        "window_end": "2026-11-13T03:30:00Z",
+        "include": [
+          "deploys",
+          "config_changes",
+          "autoscaling",
+          "cron_jobs"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t3",
+      "agent": "dependency",
+      "goal": "Map image-resizer's upstream and downstream dependencies on the upload path (gateway, object storage, queues). Note which are not on the read/display path, and find past incidents with bursty 502s on uploads.",
+      "params": {
+        "service": "image-resizer",
+        "focus": "upload write path vs read path",
+        "past_incident_keywords": [
+          "502",
+          "upload",
+          "bursts",
+          "image-resizer"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t4",
+      "agent": "reasoning",
+      "goal": "Build competing root-cause hypotheses for the bursty ~25% upload 502s on image-resizer while reads stay healthy. Rank them by evidence and list the checks that would tell them apart.",
+      "params": {
+        "service": "image-resizer"
+      },
+      "depends_on": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "c1.1",
+      "agent": "observability",
+      "goal": "Establish the memory and OOM timeline. First, check whether image-resizer memory growth predates or follows the 02:50Z thumbnail-cache deploy. Second, check whether OOM kills and pod restarts precede the ~03:20Z onset and recur at burst intervals in a sawtooth pattern. Query memory_rss_mib_max, oom_kills_total and pod_restarts individually by name at the finest available resolution, and read the container memory limit.",
+      "params": {
+        "service": "image-resizer",
+        "start": "2026-11-13T02:30:00Z",
+        "end": "2026-11-13T04:00:00Z",
+        "metrics": [
+          "memory_rss_mib_max",
+          "oom_kills_total",
+          "pod_restarts",
+          "memory_limit_mib"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c1.2",
+      "agent": "observability",
+      "goal": "Get direct 502 evidence from the caller side, since the image-resizer logs time out. Pull upload-api ERROR logs to get the 502 burst timestamps and the upstream error type (connection reset or refused on a dying pod, timeout, or a 5xx returned by image-resizer). Also capture any payload-size fields on failed uploads. If budget remains, retry image-resizer ERROR logs in 5-minute slices from 03:15Z to 03:30Z.",
+      "params": {
+        "service": "upload-api",
+        "start": "2026-11-13T03:10:00Z",
+        "end": "2026-11-13T03:50:00Z",
+        "level": "ERROR"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c1.3",
+      "agent": "observability",
+      "goal": "Test h2 directly. Compare thumbnail-cache hit/miss rate, eviction count, error rate and latency p99 before and after the v2.0.0 (LFU) deploy at 02:50Z. Check whether thumbnail-cache errors or latency spikes line up with the ~03:20Z onset and the bursts.",
+      "params": {
+        "service": "thumbnail-cache",
+        "start": "2026-11-13T02:30:00Z",
+        "end": "2026-11-13T04:00:00Z",
+        "metrics": [
+          "hit_rate",
+          "evictions",
+          "error_rate",
+          "latency_p99"
+        ]
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c1.r",
+      "agent": "reasoning",
+      "goal": "Revise the hypotheses with the new findings. The Critic said: h1 (image-resizer OOM) leads, but its own evidence barely supports it. (1) oom_kills_total=3 at 03:35Z comes from a counter with a single sample. We do not know when those kills happened, whether they cluster at the burst times, or whether they started before the ~03:20Z onset. All three could be after 03:20Z, which would make OOM a consequence rather than the cause. (2) The memory rise is 3890→4060 MiB across two points, the container limit is unknown, and there is no sample before 03:00Z. So we cannot tell whether growth began after the thumbnail-cache v2.0.0 deploy at 02:50Z. That is the single observation that would separate a standalone leak (h1) from h1 driven by the LFU change (h2). (3) There is no direct 502 evidence at all. http_5xx_rate is empty and the image-resizer logs timed out (gap:1, gap:2). Nobody tried the caller side, where the 502s are actually produced. upload-api logs would give burst timestamps and the upstream error type (connection reset vs timeout vs upstream 5xx). Without them, the 'waves' are not tied to anything. (4) h2 is ranked too low for being the only change in the window on a direct downstream dependency, yet no thumbnail-cache health or hit-rate data was ever pulled. If thumbnail-cache itself errors or slows in bursts, a cache-side failure would explain the 502s without OOM. (5) h3 is set to 0.0 only because no edge config change was recorded. Payload size was never checked, but it ranks below the items above. h4 (blob-store) is also unchecked, but it lacks any link to the memory signal, so it is deprioritized given the budget.",
+      "params": {},
+      "depends_on": [
+        "c1.1",
+        "c1.2",
+        "c1.3"
+      ],
+      "status": "done",
+      "origin": "critic",
+      "loop": 1
+    },
+    {
+      "id": "c2.1",
+      "agent": "observability",
+      "goal": "Separate a standalone leak (h1) from growth accelerated by LFU (h2), and confirm the wave mechanism. (a) Pull image-resizer memory_rss_mib_max from 2026-11-12T00:00:00Z to 2026-11-13T03:00:00Z at the finest resolution available. Compare the slope before and after 02:50Z, and check whether memory was already above about 3.5 GiB before the thumbnail-cache deploy. (b) Pull image-resizer logs (all levels, keyword OOMKilled) for 2026-11-13T03:25:00Z to 2026-11-13T03:40:00Z. Find the timestamp and pod of the third OOM kill, and check whether it precedes the 03:31:20Z upload-api reset.",
+      "params": {
+        "service": "image-resizer",
+        "start": "2026-11-12T00:00:00Z",
+        "end": "2026-11-13T03:40:00Z",
+        "metric": "memory_rss_mib_max",
+        "log_keyword": "OOMKilled",
+        "log_window_start": "2026-11-13T03:25:00Z",
+        "log_window_end": "2026-11-13T03:40:00Z"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "critic",
+      "loop": 2
+    },
+    {
+      "id": "c2.r",
+      "agent": "reasoning",
+      "goal": "Revise the hypotheses with the new findings. The Critic said: h1 is the best-supported hypothesis. It rests on direct OOMKilled events (pod -2 at 03:19:51Z and pod -4 at 03:24:37Z, both at the 4096Mi limit with 117h uptime), an upload-api 'connection reset by peer' 502 14 seconds after the first kill, and flat RPS. That is much stronger than timing alone. Three weaknesses remain.\n\n1. **The leak versus the 02:50Z deploy is not settled.** There is no image-resizer memory sample before 03:00Z, so we cannot tell a standalone multi-day leak (h1) from LFU-driven growth after the thumbnail-cache v2.0.0 deploy at 02:50Z (h2). The 117h uptime argues for a leak, but the 3890 MiB reading at 03:00Z is a per-interval max taken after the deploy. A faster slope after 02:50Z would still be consistent with h2 accelerating the failure. This matters for remediation: restarting or rolling pods versus rolling back thumbnail-cache.\n\n2. **The third OOM kill and the wave mechanism are unconfirmed.** The third kill implied by oom_kills_total=3 is inferred, not observed. The 03:31:20Z reset is about 7 minutes after the 03:24:37Z kill, so we have not shown that every burst maps to a kill. The 'pods leak in lockstep' explanation for the waves is therefore only partly shown.\n\n3. **Residual concerns are low risk.** h3 (oversized payloads) and h4 (blob-store) remain unverified, but the reset-by-peer pattern after OOMKills makes them unlikely. The tight 14-second OOM-to-reset match also argues against h3, since a payload-driven OOM would look the same, but flat RPS and 117h uptime fit accumulation better. I accept a residual risk there.\n\nWith 3 tool calls left, one focused check gives the most value: a multi-day memory baseline from before the deploy, plus the timestamps of the OOM kills.",
+      "params": {},
+      "depends_on": [
+        "c2.1"
+      ],
+      "status": "done",
+      "origin": "critic",
+      "loop": 2
+    }
+  ],
+  "findings": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "Image-resizer memory RSS max was 3890 MiB at 03:00:00Z and rose to 4060 MiB at 03:15:00Z, within the window where the 502 failures began (~03:20Z).",
+          "evidence_ids": [
+            "metric:inc04:mem:0004",
+            "metric:inc04:mem:0005"
+          ]
+        },
+        {
+          "statement": "The oom_kills_total counter for image-resizer was 3 at 03:35:00Z.",
+          "evidence_ids": [
+            "metric:inc04:oom:0001"
+          ]
+        },
+        {
+          "statement": "Requests per second were 212 at 02:45:00Z and 219 at 03:15:00Z, so traffic rose only slightly across the period when memory climbed and OOM kills appeared.",
+          "evidence_ids": [
+            "metric:inc04:rps:0001",
+            "metric:inc04:rps:0002"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The 502 bursts are caused by image-resizer pods being OOM-killed and restarting, with in-flight requests failing at the gateway.",
+          "basis": "Memory RSS climbed to about 4 GiB around 03:15Z, the first OOM kill is recorded at 03:35Z, and the 502 onset is about 03:20Z. Timing is consistent but not proven, and the first OOM kill postdates the reported onset.",
+          "how_to_verify": "Retrieve ERROR logs for image-resizer around 03:15Z to 03:45Z (retry the timed-out query or narrow the window), and correlate 502 timestamps with pod restart and OOM events."
+        },
+        {
+          "statement": "Memory growth is a leak or unbounded per-request allocation (for example large images held in memory), not a traffic spike, because RPS was roughly flat.",
+          "basis": "RPS moved only from 212 to 219 while memory rose from 3890 to 4060 MiB.",
+          "how_to_verify": "Pull memory samples at finer granularity and compare against the container memory limit. Check for large-image or concurrency settings and whether memory returns to baseline after pod restarts."
+        },
+        {
+          "statement": "The metrics tool returned only sparse samples (five points), so latency_p99, pod_restarts, cpu, and the full oom_kills series were not returned and may not exist for this service.",
+          "basis": "The unfiltered metrics call returned only requests_per_s, memory_rss_mib_max, and oom_kills_total. Filtered calls for http_5xx_rate returned nothing.",
+          "how_to_verify": "Query latency_p99, pod_restarts, cpu, and memory individually by name, and confirm the metric names exist for this service in the metrics backend."
+        },
+        {
+          "statement": "No deploy or config change caused the regression, since none appears in the deploys tool for the window.",
+          "basis": "The deploys query returned an empty result for image-resizer over 02:30Z to 04:00Z.",
+          "how_to_verify": "Check the deploy and config-change history for upstream services and shared infrastructure (for example node pool or memory limit changes) that deploys may not cover, and confirm the deploys tool covers all change sources."
+        },
+        {
+          "statement": "The 25% failure rate and the wave pattern (bursts every few minutes) come from periodic memory buildup and OOM-driven pod restarts, not from a dependency outage.",
+          "basis": "The bursts were not directly observed. Only one OOM kill point and one memory rise are visible, and dependency health was not checked.",
+          "how_to_verify": "Check dependencies for image-resizer (downstream storage or cache) for errors in the same window, and get the restart timestamps to confirm periodicity."
+        },
+        {
+          "statement": "The deploys query for image-resizer from 02:30Z to 04:00Z returned no deployments or config changes.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        },
+        {
+          "statement": "The http_5xx_rate metric query for image-resizer over 02:45Z to 04:00Z returned no samples, so the 502 rate could not be confirmed from metrics.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        },
+        {
+          "statement": "ERROR-level logs for image-resizer could not be retrieved: both the full-window query and the 03:15Z to 03:45Z query timed out after 3 attempts.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        }
+      ]
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "The only deploy or config change returned in the 02:45 to 03:30 UTC window, across all services, was thumbnail-cache v2.0.0 at 02:50:00Z, which switches its eviction policy from LRU to LFU.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        },
+        {
+          "statement": "No deploy or config change for image-resizer itself appears in the 02:45 to 03:30 UTC window.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        },
+        {
+          "statement": "The service graph lists upload-api as an upstream caller that depends on image-resizer.",
+          "evidence_ids": [
+            "dependency:inc04:0001"
+          ]
+        },
+        {
+          "statement": "image-resizer memory RSS max rose from 3890 MiB at 03:00:00Z to 4060 MiB at 03:15:00Z, while requests_per_s moved only from 212 at 02:45:00Z to 219 at 03:15:00Z.",
+          "evidence_ids": [
+            "metric:inc04:mem:0004",
+            "metric:inc04:mem:0005",
+            "metric:inc04:rps:0001",
+            "metric:inc04:rps:0002"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "Autoscaling events for image-resizer and its gateway/load balancer in the window are unknown, because no autoscaling tool exists in this toolset.",
+          "basis": "The available tools do not include an autoscaling source, so the autoscaling part of the t2 request could not be checked.",
+          "how_to_verify": "Pull autoscaler or orchestrator event logs for image-resizer and the gateway/load balancer for 02:45 to 03:30 UTC."
+        },
+        {
+          "statement": "Scheduled jobs (cron) affecting image-resizer or its gateway were not checked and may be a cause of the bursts.",
+          "basis": "No cron or scheduled-job tool is available, so this part of the request has no evidence.",
+          "how_to_verify": "Query the scheduler or cron registry for jobs targeting image-resizer, the gateway, or shared hosts, and check their run times against the 502 bursts."
+        },
+        {
+          "statement": "The thumbnail-cache v2.0.0 eviction change probably does not affect image-resizer, but this is not confirmed.",
+          "basis": "The deploy record shows only a cache eviction policy change and no edge from thumbnail-cache to image-resizer appears in the results. The graph was checked only for image-resizer upstream, not for thumbnail-cache's neighbours.",
+          "how_to_verify": "Check dependencies for thumbnail-cache (both directions) and confirm whether image-resizer calls it or shares its cache or memory."
+        },
+        {
+          "statement": "The gateway or load balancer in front of image-resizer is not identified, so its deploys, config and health events are not covered.",
+          "basis": "The upstream dependency query returned only upload-api. No gateway or load balancer node appeared.",
+          "how_to_verify": "Identify the ingress or gateway service for upload-api to image-resizer traffic, then run the deploys and metrics checks for it over the window."
+        },
+        {
+          "statement": "The memory increase may be unrelated to the 502s, and no 502-rate or error-log data has been checked yet.",
+          "basis": "The metrics call returned four samples for the whole window. It had no 502 counts, and the only memory sample before 03:00 is absent, so the trend is hard to read.",
+          "how_to_verify": "Query image-resizer logs at ERROR and WARN levels from 02:45 to 03:30 UTC, and compare 502 timing with memory and restart events at the 03:00 and 03:15 samples."
+        }
+      ]
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "facts": [
+        {
+          "statement": "image-resizer has two downstream dependencies in the service graph: thumbnail-cache and blob-store.",
+          "evidence_ids": [
+            "dependency:inc04:0002",
+            "dependency:inc04:0003"
+          ]
+        },
+        {
+          "statement": "upload-api depends on image-resizer, making upload-api the upstream caller on the upload path.",
+          "evidence_ids": [
+            "dependency:inc04:0001"
+          ]
+        },
+        {
+          "statement": "The dependency graph returned no edges to or from a gateway or a message queue for image-resizer or upload-api.",
+          "evidence_ids": [
+            "dependency:inc04:0001",
+            "dependency:inc04:0002",
+            "dependency:inc04:0003"
+          ]
+        },
+        {
+          "statement": "The only past incident returned for 502s on uploads involved oversized camera photos (60 MB) crashing the decoder. It was resolved by enforcing a 50 MB upload limit at the edge. Its tags are image, upload, and bad-input.",
+          "evidence_ids": [
+            "past:inc04:0001"
+          ]
+        },
+        {
+          "statement": "No past incident returned matched the bursty-502 pattern on uploads, so none of the returned history directly explains waves of failures a few minutes apart.",
+          "evidence_ids": [
+            "past:inc04:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The upload write path is upload-api -> image-resizer -> blob-store, with thumbnail-cache possibly in the processing step.",
+          "basis": "Only the listed edges are known. The graph does not state call order or which edges are on the write path.",
+          "how_to_verify": "Confirm the call sequence from upload-api and image-resizer traces or code for the upload handler."
+        },
+        {
+          "statement": "The read/display path does not use image-resizer, so already-uploaded images still displaying is consistent with the read path being separate.",
+          "basis": "The graph lists no read-path consumer of image-resizer, and the symptom says existing images still display. Whether thumbnail-cache or blob-store serve reads is not shown.",
+          "how_to_verify": "Check whether the display path (CDN or read service) calls blob-store or thumbnail-cache directly, using dependencies on those services with direction both."
+        },
+        {
+          "statement": "The gateway that sits in front of upload-api is not in the graph, so gateway-level 502s cannot be ruled in or out from these results.",
+          "basis": "Dependency queries for image-resizer and upload-api returned no gateway edge.",
+          "how_to_verify": "Query dependencies for the gateway service, and check its logs for 502s in the window 02:45 to 04:00 UTC."
+        },
+        {
+          "statement": "Queues are not part of the returned graph, so a queue-based cause is not covered by this analysis.",
+          "basis": "No queue edge appeared in the returned dependencies.",
+          "how_to_verify": "Confirm whether image-resizer consumes from a queue, either through a graph query on a queue service name or by checking its configuration."
+        },
+        {
+          "statement": "The 25% failure rate and few-minute bursts are not explained by the available dependency data.",
+          "basis": "The dependency and past-incident results contain no timing or rate information.",
+          "how_to_verify": "Pull image-resizer and blob-store logs at ERROR level and metrics for 5xx rate and latency across the window, and check deploys and config changes near 03:20 UTC."
+        },
+        {
+          "statement": "The oversized-photo hypothesis from past:inc04:0001 is unverified. A 50 MB edge limit may have been removed or changed, or a new input pattern may be reaching the decoder.",
+          "basis": "The prior incident is a similar symptom (502s on uploads), but the current report includes no information on payload size.",
+          "how_to_verify": "Check the edge upload-size limit config in deploys, and sample rejected or failed upload sizes in image-resizer logs."
+        },
+        {
+          "statement": "The dependency and past-incident results may be incomplete. Only a single past incident matched, and the graph may not list every edge.",
+          "basis": "Each query returned omitted: 0 and a single matching record, which may reflect narrow keywords or sparse data.",
+          "how_to_verify": "Broaden past_incidents keywords (for example 'decoder', '502', 'burst') and widen the time window in logs and metrics queries."
+        }
+      ]
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The 502s are generated where upload-api or a gateway calls image-resizer, so they reflect image-resizer pod failures or timeouts.",
+          "basis": "The graph shows upload-api -> image-resizer, and no gateway is identified. http_5xx_rate and the logs were unavailable (gap:1, gap:2).",
+          "how_to_verify": "Retry the image-resizer ERROR log query in narrow 5-minute slices around 03:15-03:45Z. Correlate 502 timestamps in upload-api with image-resizer pod restart and OOM events."
+        },
+        {
+          "statement": "image-resizer memory near 4060 MiB is close to the container limit (presumably 4 GiB).",
+          "basis": "OOM kills appeared shortly after memory RSS max reached ~4060 MiB.",
+          "how_to_verify": "Read the image-resizer container memory limit and get the per-pod RSS series at 1-minute resolution with restart markers. Check whether memory resets after each restart (sawtooth = h1)."
+        },
+        {
+          "statement": "image-resizer's behaviour depends on thumbnail-cache hit rate, so the LFU change could increase its work or memory.",
+          "basis": "The graph edge image-resizer -> thumbnail-cache exists, but call semantics are unknown.",
+          "how_to_verify": "Compare thumbnail-cache hit/miss rate and eviction counts before and after 02:50Z. Check whether image-resizer memory began rising after 02:50Z. Test a rollback of thumbnail-cache to v1 (LRU) or the eviction policy, and watch whether 502s and memory growth stop (distinguishes h2 from a standalone leak in h1)."
+        },
+        {
+          "statement": "Upload size distribution is unchanged and the 50 MB edge limit is still enforced.",
+          "basis": "No config change for the edge appears in deploy records, and there is no payload-size data.",
+          "how_to_verify": "Check the edge upload-size limit config and sample request sizes of failed uploads versus successful ones (confirms or rejects h3)."
+        },
+        {
+          "statement": "blob-store is healthy on the write path.",
+          "basis": "No blob-store metrics or logs were collected.",
+          "how_to_verify": "Query blob-store write error rate and latency p99 for 02:45-04:00Z and check them against the 502 burst times (h4)."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "image-resizer memory_rss_mib_max was 3890.0 MiB at 2026-11-13T03:00:00Z.",
+          "evidence_ids": [
+            "metric:inc04:mem:0004"
+          ]
+        },
+        {
+          "statement": "image-resizer memory_rss_mib_max was 4060.0 MiB at 2026-11-13T03:15:00Z, up 170 MiB from the 03:00Z sample.",
+          "evidence_ids": [
+            "metric:inc04:mem:0005"
+          ]
+        },
+        {
+          "statement": "image-resizer oom_kills_total reported 3.0 at 2026-11-13T03:35:00Z.",
+          "evidence_ids": [
+            "metric:inc04:oom:0001"
+          ]
+        },
+        {
+          "statement": "A thumbnail-cache v2.0.0 deploy at 2026-11-13T02:50:00Z switched its eviction policy from LRU to LFU.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "Memory growth in image-resizer may have started before the 02:50Z thumbnail-cache deploy, but this cannot be determined.",
+          "basis": "The first memory_rss_mib_max sample in the 02:30Z-04:00Z window is at 03:00Z, so there is no pre-deploy baseline.",
+          "how_to_verify": "Re-query memory_rss_mib_max for image-resizer from 02:30Z to 03:00Z at the finest available resolution, or check raw container metrics for that period."
+        },
+        {
+          "statement": "The oom_kills_total value of 3.0 at 03:35Z may be cumulative and may include kills before the 03:20Z onset that were not sampled.",
+          "basis": "Only one oom_kills_total sample was returned, with no earlier timestamps, so the kill times and the sawtooth pattern cannot be established.",
+          "how_to_verify": "Query oom_kills_total at finer resolution and check image-resizer ERROR/WARN logs and orchestrator events (OOMKilled) for timestamps of each kill."
+        },
+        {
+          "statement": "No pod restart data is available, so whether restarts precede the 03:20Z onset or recur at burst intervals is unknown.",
+          "basis": "The pod_restarts query returned no evidence rows.",
+          "how_to_verify": "Re-query pod_restarts for image-resizer, or confirm from the orchestrator restart count for each pod over 02:30Z-04:00Z; determine whether the empty result is a metric gap or zero restarts."
+        },
+        {
+          "statement": "The image-resizer container memory limit is unknown, so it cannot be determined whether the 3890-4060 MiB RSS readings approach an OOM threshold.",
+          "basis": "The memory_limit_mib query returned no evidence rows.",
+          "how_to_verify": "Read the container memory limit from the image-resizer deployment spec or the orchestrator for the active pods."
+        },
+        {
+          "statement": "No image-resizer deploy or config change occurred in the window, so any change is from another service.",
+          "basis": "The service-filtered deploys query for image-resizer returned no rows; the unfiltered query returned only the thumbnail-cache deploy. This is a negative result and cites no evidence ID.",
+          "how_to_verify": "Check the image-resizer release history and config change log for 02:30Z-04:00Z."
+        },
+        {
+          "statement": "The thumbnail-cache deploy is causally linked to image-resizer memory growth or the OOM kills.",
+          "basis": "The dependency graph was not queried, so the call relationship between thumbnail-cache and image-resizer is unconfirmed; the timing alone does not establish causation.",
+          "how_to_verify": "Query dependencies for image-resizer (both directions) to see whether it calls or is called by thumbnail-cache, then compare memory behavior before and after 02:50Z."
+        },
+        {
+          "statement": "The 170 MiB RSS increase between 03:00Z and 03:15Z is a two-point trend, not a confirmed growth rate.",
+          "basis": "Only two memory_rss_mib_max samples were returned, and the metric is a per-interval maximum.",
+          "how_to_verify": "Obtain memory samples at a finer interval across 02:30Z-03:35Z to confirm the slope and any drop-and-reset pattern."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.2",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "upload-api logged a 502 on POST /images at 2026-11-13T03:20:05Z with the message 'image-resizer connection reset by peer'.",
+          "evidence_ids": [
+            "log:inc04:0006"
+          ]
+        },
+        {
+          "statement": "upload-api logged the same 502 'image-resizer connection reset by peer' error on POST /images at 2026-11-13T03:31:20Z.",
+          "evidence_ids": [
+            "log:inc04:0010"
+          ]
+        },
+        {
+          "statement": "Pod image-resizer-7c9-2 had its image-resizer container OOMKilled at 2026-11-13T03:19:51Z (memory limit 4096Mi, pod uptime 117h).",
+          "evidence_ids": [
+            "log:inc04:0005"
+          ]
+        },
+        {
+          "statement": "Pod image-resizer-7c9-4 had its image-resizer container OOMKilled at 2026-11-13T03:24:37Z (memory limit 4096Mi, pod uptime 117h).",
+          "evidence_ids": [
+            "log:inc04:0007"
+          ]
+        },
+        {
+          "statement": "The upload-api ERROR log payloads returned for the 502s contain only service, level and message fields. They include no payload-size field, so payload size cannot be correlated with the failures from these logs.",
+          "evidence_ids": [
+            "log:inc04:0006",
+            "log:inc04:0010"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The two OOMKills of pods image-resizer-7c9-2 and image-resizer-7c9-4 are the cause of the 'connection reset by peer' 502s. The OOMKill precedes each reset (03:19:51 to 03:20:05, and 03:24:37 to 03:31:20), but the reset-to-OOM link is inferred from timing only.",
+          "basis": "Temporal ordering of the OOMKilled events and the upload-api 502 log lines. The 03:24:37 OOM and 03:31:20 reset gap is about 7 minutes, so the link is not tight.",
+          "how_to_verify": "Check pod restart counts and container memory metrics for image-resizer pods over 03:00Z to 04:00Z, and confirm that connection resets coincide with pod restarts or dying pods."
+        },
+        {
+          "statement": "The 'waves' pattern (bursts a few minutes apart) is produced by individual pods being OOMKilled and restarted in sequence, rather than by a single fleet-wide event.",
+          "basis": "Two OOMKills on different pods (-2 at 03:19:51Z, -4 at 03:24:37Z) about 5 minutes apart, which roughly matches the reported burst spacing. Only two events were found, so this is weakly supported.",
+          "how_to_verify": "Get the full list of image-resizer OOMKill and restart events for 02:45Z to 04:00Z, and check whether the bursts line up with them."
+        },
+        {
+          "statement": "The upload-api ERROR query is incomplete. It returned only two 502 entries for 03:10Z to 03:50Z, while the symptoms report about 25% of uploads failing from about 03:20Z.",
+          "basis": "The log result shows 2 entries and omitted=0, which is inconsistent with a 25% failure rate over a 30-minute period. The result may be missing rows, failures may be logged at a different level or under a different message, or the failures may not be logged as ERROR.",
+          "how_to_verify": "Re-query upload-api at WARN and INFO levels for 03:10Z to 03:50Z, and compare the upload-api 5xx request count metric against the failure rate in the report."
+        },
+        {
+          "statement": "The image-resizer container did not log ERROR entries between 03:25Z and 03:30Z, but this is not confirmed as a true absence of errors.",
+          "basis": "The 03:25Z to 03:30Z ERROR query returned an empty evidence list with attempts=1 and omitted=0. Log loss during pod restarts or a query gap is also possible.",
+          "how_to_verify": "Re-query image-resizer logs for 03:25Z to 03:30Z at all levels, and check pod status and restart timestamps for that interval."
+        },
+        {
+          "statement": "Payload size is not the cause of the failures, or at least is not shown to be. Payload-size data is absent from the returned logs, so the question is unresolved and not disproven.",
+          "basis": "The upload-api ERROR payloads carry no size field, and no other payload-size source has been queried.",
+          "how_to_verify": "Obtain request size from upload-api INFO or access logs or request metrics for failed and successful POST /images calls, and compare size distributions for the 502s and the successful uploads."
+        },
+        {
+          "statement": "Already-uploaded images still display because stored images are served from storage that is separate from the image-resizer pods, so the outage affects only the write (resize) path.",
+          "basis": "Symptom report only. This investigation did not query the image read or serving path.",
+          "how_to_verify": "Check the read or CDN path for stored images and confirm it does not call image-resizer."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.3",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "A thumbnail-cache deploy to v2.0.0 with the description 'Switch eviction policy from LRU to LFU' is recorded at 2026-11-13T02:50:00Z.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        },
+        {
+          "statement": "The v2.0.0 deploy at 02:50:00Z is about 30 minutes before the reported onset of upload 502s at about 03:20Z, and the deploy targets thumbnail-cache while the affected service in the report is image-resizer.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The thumbnail-cache metrics queries (unfiltered, hit_rate, and evictions) returned no samples for 02:30Z to 04:00Z, so hit rate, eviction count, error rate and p99 latency before and after the 02:50Z deploy could not be compared. The hypothesis that LFU caused the change is neither confirmed nor ruled out.",
+          "basis": "Each metrics call returned status ok with evidence: [] and omitted: 0. The tool gives no reason for the empty result.",
+          "how_to_verify": "Confirm the metric names and service identifier that thumbnail-cache exports, check the metrics store for ingestion gaps in this window, and re-query error_rate and latency_p99 for thumbnail-cache and for image-resizer."
+        },
+        {
+          "statement": "No thumbnail-cache ERROR-level log lines exist in 02:30Z to 04:00Z, so thumbnail-cache errors cannot be tied to the ~03:20Z onset or to the bursts.",
+          "basis": "The ERROR-level logs query returned status ok with evidence: [] and no rows.",
+          "how_to_verify": "Query image-resizer logs for 502s and upstream timeouts in the window, and check whether thumbnail-cache logs are ingested at all (e.g., an unfiltered logs query for the same service and window)."
+        },
+        {
+          "statement": "The service graph was not checked, so it is unknown whether image-resizer calls thumbnail-cache, and whether a 502 would be returned on a cache miss path.",
+          "basis": "The dependencies tool was not called during this task.",
+          "how_to_verify": "Call dependencies for image-resizer with direction 'downstream' and check for a thumbnail-cache edge."
+        }
+      ]
+    },
+    {
+      "task_id": "c1.r",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The third OOM kill counted by oom_kills_total=3 at 03:35Z happened shortly before the 03:31:20Z reset 502, on a pod other than -2 or -4.",
+          "basis": "Two OOMKilled events were found (03:19:51Z, 03:24:37Z), but the counter reads 3. The 03:31:20Z reset has no matching kill.",
+          "how_to_verify": "List all OOMKilled and restart events for image-resizer pods from 02:45Z to 04:00Z, and match each one to upload-api 502 timestamps."
+        },
+        {
+          "statement": "All image-resizer pods were started around the same time (~117h ago) and leak at a similar rate, so they reach 4096Mi in close succession, which produces the waves.",
+          "basis": "Both OOMKilled pods report 117h uptime and were killed about 5 minutes apart.",
+          "how_to_verify": "Get the start time and per-pod RSS series for every pod. Confirm a sawtooth pattern where memory drops after each restart and then climbs steadily."
+        },
+        {
+          "statement": "Memory growth began before the 02:50Z thumbnail-cache deploy, which would separate a standalone leak (h1) from growth driven by LFU (h2).",
+          "basis": "Pods have 117h uptime and were already at 3890 MiB by 03:00Z. Reaching that level only 10 minutes after the deploy would need very fast growth, but no pre-03:00Z sample exists.",
+          "how_to_verify": "Pull image-resizer RSS over the past several days, compare the slope before and after 02:50Z, and compare thumbnail-cache hit rate across the deploy."
+        },
+        {
+          "statement": "The 25% failure rate is larger than the two upload-api ERROR lines suggest; the log query returned only a subset.",
+          "basis": "Only 2 entries were returned for 03:10Z to 03:50Z, which does not match ~25% of uploads failing.",
+          "how_to_verify": "Query the upload-api 5xx count metric or access logs at all levels, and plot the burst times."
+        }
+      ]
+    },
+    {
+      "task_id": "c2.1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "image-resizer memory_rss_mib_max was 3420.0 MiB at 2026-11-12T10:00:00Z, which is below 3.5 GiB (3584 MiB).",
+          "evidence_ids": [
+            "metric:inc04:mem:0003"
+          ]
+        },
+        {
+          "statement": "image-resizer memory_rss_mib_max was 3890.0 MiB at 2026-11-13T03:00:00Z, which is above 3.5 GiB.",
+          "evidence_ids": [
+            "metric:inc04:mem:0004"
+          ]
+        },
+        {
+          "statement": "At 2026-11-13T03:25:10Z image-resizer logged a WARN for a 2.6s GC pause with heap at 3.96 GiB of 4.00 GiB.",
+          "evidence_ids": [
+            "log:inc04:0008"
+          ]
+        },
+        {
+          "statement": "At 2026-11-13T03:31:02Z pod image-resizer-7c9-1 was OOMKilled, with a 4096Mi limit and 117h uptime.",
+          "evidence_ids": [
+            "log:inc04:0009"
+          ]
+        },
+        {
+          "statement": "At 2026-11-13T03:33:40Z image-resizer v3.4.2 started in pod image-resizer-7c9-2 with heap at 0.61 GiB.",
+          "evidence_ids": [
+            "log:inc04:0011"
+          ]
+        },
+        {
+          "statement": "The deploys query for image-resizer from 2026-11-12T00:00:00Z to 2026-11-13T03:40:00Z returned no deployment or config-change records.",
+          "evidence_ids": [
+            "deploys:inc04:empty"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The third OOM kill cannot be identified from the evidence. The log query used level=null and returned only one OOMKilled line (03:31:02Z, pod image-resizer-7c9-1) in the 03:25–03:40Z window, so the claimed three-kill wave is not confirmed.",
+          "basis": "Only one OOMKilled-related ERROR line was returned; no keyword filter was applied to the query, and no other kill lines appear.",
+          "how_to_verify": "Re-query image-resizer logs for 03:25–03:40Z filtered on OOMKilled and count kill events by pod and timestamp."
+        },
+        {
+          "statement": "The 03:31:20Z upload-api reset is not in the evidence. Its timing relative to the OOM kill is taken from the incident report only. The verified OOM at 03:31:02Z precedes 03:31:20Z by 18 seconds.",
+          "basis": "Incident report timestamp; the upload-api reset was not queried.",
+          "how_to_verify": "Pull upload-api logs and metrics around 03:31:20Z and confirm the reset time and its trigger."
+        },
+        {
+          "statement": "The leak versus LFU-accelerated growth question cannot be answered. Only two memory samples exist, 25 hours apart, so no slope can be computed before or after 02:50Z.",
+          "basis": "metrics query returned two points (10:00Z on 11-12 and 03:00Z on 11-13) with no samples near 02:50Z.",
+          "how_to_verify": "Pull memory_rss_mib_max at the finest resolution for 2026-11-13T00:00Z–03:40Z and fit slopes before and after 02:50Z. Also pull cache eviction or LFU metrics if available."
+        },
+        {
+          "statement": "Whether memory crossed 3.5 GiB before the thumbnail-cache deploy is unknown. The threshold was crossed between the 10:00Z sample on 11-12 and the 03:00Z sample on 11-13, but the deploy time is not in the evidence and the deploy query returned nothing.",
+          "basis": "Metric samples bracket the crossing; deploys query returned no records; thumbnail-cache deploy time comes only from the task framing.",
+          "how_to_verify": "Confirm the thumbnail-cache deploy timestamp from the CD system or a broader deploy query, then compare with a fine-grained memory series."
+        },
+        {
+          "statement": "The wave mechanism (bursts of 502s a few minutes apart driven by serial OOM restarts) is not confirmed by this evidence. The only verified restart is pod -1 at 03:31:02Z, followed by pod -2 starting at 03:33:40Z.",
+          "basis": "Single OOM event and single restart log in the window; no 502 or upload-level logs were queried.",
+          "how_to_verify": "Query image-resizer 502 counts and pod restart events in 02:45–04:00Z at fine resolution and align them with OOM and restart timestamps."
+        },
+        {
+          "statement": "Memory data is coarse. Sampling intervals are unknown and gaps may exist, so the 3890 MiB value at 03:00Z may understate or overstate the peak.",
+          "basis": "metrics returned only two points for a 27-hour window with closes_gaps empty.",
+          "how_to_verify": "Request metrics at the highest available resolution with the sampling interval specified."
+        }
+      ]
+    },
+    {
+      "task_id": "c2.r",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The memory_rss_mib_max series reflects the same long-lived pods across 11-12 and 11-13, so the pre-deploy 3420 MiB reading shows the leak was already under way.",
+          "basis": "Killed pods report 117h uptime, which means they were started before 2026-11-12T10:00Z.",
+          "how_to_verify": "Pull per-pod RSS at fine resolution for the past several days and confirm a steady slope with no change in rate at 02:50Z."
+        },
+        {
+          "statement": "The pod -4 kill at 03:24:37Z also produced 502s, which are missing only because the upload-api log results were sparse.",
+          "basis": "Only 2 upload-api 502 lines were returned, while about 25% of requests failed.",
+          "how_to_verify": "Query upload-api 5xx counts or access logs at all levels for 03:20-03:35Z and align them with each OOMKill."
+        },
+        {
+          "statement": "Restarting or rolling the image-resizer pods will stop the waves for now, and a fix for the leak is still needed.",
+          "basis": "Restarted pod -2 came back with heap at 0.61 GiB.",
+          "how_to_verify": "Roll the remaining old pods, confirm the 502s stop, and track the RSS slope after restart."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "metric:inc04:rps:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-13T02:45:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "requests_per_s",
+        "value": 212.0
+      }
+    },
+    {
+      "id": "metric:inc04:mem:0004",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:00:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "memory_rss_mib_max",
+        "value": 3890.0
+      }
+    },
+    {
+      "id": "metric:inc04:mem:0005",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:15:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "memory_rss_mib_max",
+        "value": 4060.0
+      }
+    },
+    {
+      "id": "metric:inc04:rps:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:15:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "requests_per_s",
+        "value": 219.0
+      }
+    },
+    {
+      "id": "metric:inc04:oom:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:35:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "oom_kills_total",
+        "value": 3.0
+      }
+    },
+    {
+      "id": "deploy:inc04:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-13T02:50:00Z",
+      "payload": {
+        "service": "thumbnail-cache",
+        "version": "v2.0.0",
+        "description": "Switch eviction policy from LRU to LFU"
+      }
+    },
+    {
+      "id": "dependency:inc04:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "upload-api",
+        "depends_on": "image-resizer"
+      }
+    },
+    {
+      "id": "dependency:inc04:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "image-resizer",
+        "depends_on": "thumbnail-cache"
+      }
+    },
+    {
+      "id": "dependency:inc04:0003",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "image-resizer",
+        "depends_on": "blob-store"
+      }
+    },
+    {
+      "id": "past:inc04:0001",
+      "kind": "past",
+      "timestamp": null,
+      "payload": {
+        "title": "Image uploads failing from oversized camera photos",
+        "tags": [
+          "image",
+          "upload",
+          "bad-input"
+        ],
+        "root_cause": "A new phone camera produced 60 MB photos that crashed the decoder",
+        "resolution": "Enforced a 50 MB upload limit at the edge"
+      }
+    },
+    {
+      "id": "log:inc04:0006",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:20:05Z",
+      "payload": {
+        "service": "upload-api",
+        "level": "ERROR",
+        "message": "POST /images 502: image-resizer connection reset by peer"
+      }
+    },
+    {
+      "id": "log:inc04:0010",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:31:20Z",
+      "payload": {
+        "service": "upload-api",
+        "level": "ERROR",
+        "message": "POST /images 502: image-resizer connection reset by peer"
+      }
+    },
+    {
+      "id": "log:inc04:0005",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:19:51Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "ERROR",
+        "message": "Container image-resizer in pod image-resizer-7c9-2 OOMKilled (limit 4096Mi, uptime 117h)"
+      }
+    },
+    {
+      "id": "log:inc04:0007",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:24:37Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "ERROR",
+        "message": "Container image-resizer in pod image-resizer-7c9-4 OOMKilled (limit 4096Mi, uptime 117h)"
+      }
+    },
+    {
+      "id": "metric:inc04:mem:0003",
+      "kind": "metric",
+      "timestamp": "2026-11-12T10:00:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "memory_rss_mib_max",
+        "value": 3420.0
+      }
+    },
+    {
+      "id": "log:inc04:0008",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:25:10Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "WARN",
+        "message": "GC pause 2.6s, heap 3.96 GiB of 4.00 GiB"
+      }
+    },
+    {
+      "id": "log:inc04:0009",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:31:02Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "ERROR",
+        "message": "Container image-resizer in pod image-resizer-7c9-1 OOMKilled (limit 4096Mi, uptime 117h)"
+      }
+    },
+    {
+      "id": "log:inc04:0011",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:33:40Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "INFO",
+        "message": "Started image-resizer v3.4.2 in pod image-resizer-7c9-2, heap 0.61 GiB"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "h1",
+      "service": "image-resizer",
+      "category": "capacity",
+      "summary": "A slow memory leak in image-resizer brings long-running pods (117h uptime) to the 4096Mi limit, and they are OOMKilled one after another. Each kill drops in-flight connections, so upload-api returns 502 'image-resizer connection reset by peer'. New evidence settles the earlier gaps. (1) The leak predates the 02:50Z thumbnail-cache deploy: max RSS was already 3420 MiB at 2026-11-12T10:00Z and reached 3890 MiB by 03:00Z, about 28 MiB/h. No image-resizer deploy or config change occurred since 11-12. (2) The third kill is observed: pod -1 was OOMKilled at 03:31:02Z, 18s before the 03:31:20Z reset 502. Two kills now map to resets within 18s: pod -2 at 03:19:51Z with a reset at 03:20:05Z, and pod -1 at 03:31:02Z with a reset at 03:31:20Z. Pod -4 was killed at 03:24:37Z. (3) The pattern is a sawtooth: a 2.6s GC pause at 3.96/4.00 GiB at 03:25:10Z, then a restart of pod -2 at 03:33:40Z with heap at 0.61 GiB. RPS stayed flat throughout. Three pods with the same uptime hit the limit about 5-7 minutes apart, which explains the waves. Remaining gap: the pod -4 kill has no matching 502 line in the sparse upload-api results.",
+      "supporting_ids": [
+        "metric:inc04:mem:0003",
+        "metric:inc04:mem:0004",
+        "metric:inc04:mem:0005",
+        "log:inc04:0005",
+        "log:inc04:0006",
+        "log:inc04:0007",
+        "log:inc04:0008",
+        "log:inc04:0009",
+        "log:inc04:0010",
+        "log:inc04:0011",
+        "metric:inc04:oom:0001",
+        "metric:inc04:rps:0001",
+        "metric:inc04:rps:0002",
+        "deploys:inc04:empty"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.8,
+      "final_confidence": 0.8
+    },
+    {
+      "id": "h2",
+      "service": "thumbnail-cache",
+      "category": "bad_deploy",
+      "summary": "The thumbnail-cache v2.0.0 deploy at 02:50Z (eviction changed from LRU to LFU) raised cache misses and sped up image-resizer memory growth toward the OOM kills. Now mostly ruled out as the root cause. Memory was already at 3420 MiB on 11-12 at 10:00Z, well before the deploy, so the leak exists on its own. The only possible support is that the 03:00-03:15Z rise of 170 MiB in 15 min is faster than the pre-deploy average. That figure is a per-interval max that may come from a different pod, so it is weak. thumbnail-cache metrics and logs were empty, so the change in hit rate is unverified. At most this is a minor accelerant.",
+      "supporting_ids": [
+        "deploy:inc04:0001",
+        "dependency:inc04:0002",
+        "metric:inc04:mem:0005"
+      ],
+      "contradicting_ids": [
+        "metric:inc04:mem:0003",
+        "log:inc04:0005",
+        "log:inc04:0009",
+        "log:inc04:0011"
+      ],
+      "proposed_confidence": 0.08,
+      "final_confidence": 0.08
+    },
+    {
+      "id": "h3",
+      "service": "image-resizer",
+      "category": "config_change",
+      "summary": "Oversized uploads, as in the past incident, may be reaching the decoder and causing allocation spikes that OOMKill pods. This is weakened by several facts. Memory grew steadily over about 17h before the incident. RPS was flat. All killed pods had the same 117h uptime. A restarted pod comes back with a small heap (0.61 GiB). No edge-limit change is recorded, and no payload-size data exists.",
+      "supporting_ids": [
+        "past:inc04:0001",
+        "log:inc04:0005",
+        "log:inc04:0009"
+      ],
+      "contradicting_ids": [
+        "metric:inc04:mem:0003",
+        "metric:inc04:mem:0004",
+        "log:inc04:0011",
+        "metric:inc04:rps:0001",
+        "metric:inc04:rps:0002"
+      ],
+      "proposed_confidence": 0.05,
+      "final_confidence": 0.05
+    },
+    {
+      "id": "h4",
+      "service": "blob-store",
+      "category": "dependency_failure",
+      "summary": "Intermittent blob-store write failures surface as upload 502s. This is contradicted: the 502s name image-resizer resetting the connection, and they follow image-resizer OOMKills within 14-18s. No blob-store data was collected.",
+      "supporting_ids": [
+        "dependency:inc04:0003"
+      ],
+      "contradicting_ids": [
+        "log:inc04:0006",
+        "log:inc04:0010",
+        "log:inc04:0005",
+        "log:inc04:0009"
+      ],
+      "proposed_confidence": 0.03,
+      "final_confidence": 0.03
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "logs",
+      "reason": "timeout after 3 attempts",
+      "service": "image-resizer",
+      "affects_hypotheses": [],
+      "task_id": "t1"
+    },
+    {
+      "id": "gap:2",
+      "tool": "logs",
+      "reason": "timeout after 3 attempts",
+      "service": "image-resizer",
+      "affects_hypotheses": [],
+      "task_id": "t1"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1",
+    "gap:2"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 30,
+    "llm_calls": 46,
+    "tokens_in": 142110,
+    "tokens_out": 42783,
+    "cache_tokens": 0,
+    "llm_latency_s": 298.553
+  },
+  "trace": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:48:54.244426Z",
+      "ended_at": "2026-11-13T06:49:22.914713Z",
+      "status": "done",
+      "tool_calls": 5,
+      "llm_calls": 6
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:48:54.247025Z",
+      "ended_at": "2026-11-13T06:49:12.062022Z",
+      "status": "done",
+      "tool_calls": 3,
+      "llm_calls": 4
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "wave": 0,
+      "started_at": "2026-11-13T06:48:54.248552Z",
+      "ended_at": "2026-11-13T06:49:21.874821Z",
+      "status": "done",
+      "tool_calls": 4,
+      "llm_calls": 5
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "wave": 1,
+      "started_at": "2026-11-13T06:49:22.916594Z",
+      "ended_at": "2026-11-13T06:49:47.900737Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 1
+    },
+    {
+      "task_id": "c1.1",
+      "agent": "observability",
+      "wave": 2,
+      "started_at": "2026-11-13T06:50:04.788712Z",
+      "ended_at": "2026-11-13T06:50:36.576528Z",
+      "status": "done",
+      "tool_calls": 6,
+      "llm_calls": 7
+    },
+    {
+      "task_id": "c1.2",
+      "agent": "observability",
+      "wave": 2,
+      "started_at": "2026-11-13T06:50:04.791020Z",
+      "ended_at": "2026-11-13T06:50:25.228644Z",
+      "status": "done",
+      "tool_calls": 4,
+      "llm_calls": 5
+    },
+    {
+      "task_id": "c1.3",
+      "agent": "observability",
+      "wave": 2,
+      "started_at": "2026-11-13T06:50:04.792804Z",
+      "ended_at": "2026-11-13T06:50:33.196784Z",
+      "status": "done",
+      "tool_calls": 5,
+      "llm_calls": 6
+    },
+    {
+      "task_id": "c1.r",
+      "agent": "reasoning",
+      "wave": 3,
+      "started_at": "2026-11-13T06:50:36.578154Z",
+      "ended_at": "2026-11-13T06:51:03.115116Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 1
+    },
+    {
+      "task_id": "c2.1",
+      "agent": "observability",
+      "wave": 4,
+      "started_at": "2026-11-13T06:51:18.130133Z",
+      "ended_at": "2026-11-13T06:51:39.611851Z",
+      "status": "done",
+      "tool_calls": 3,
+      "llm_calls": 5
+    },
+    {
+      "task_id": "c2.r",
+      "agent": "reasoning",
+      "wave": 5,
+      "started_at": "2026-11-13T06:51:39.613498Z",
+      "ended_at": "2026-11-13T06:52:41.266311Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 2
+    }
+  ],
+  "critic_loops": 2,
+  "critic_reviews": [
+    {
+      "loop": 1,
+      "critique": "h1 (image-resizer OOM) leads, but its own evidence barely supports it. (1) oom_kills_total=3 at 03:35Z comes from a counter with a single sample. We do not know when those kills happened, whether they cluster at the burst times, or whether they started before the ~03:20Z onset. All three could be after 03:20Z, which would make OOM a consequence rather than the cause. (2) The memory rise is 3890→4060 MiB across two points, the container limit is unknown, and there is no sample before 03:00Z. So we cannot tell whether growth began after the thumbnail-cache v2.0.0 deploy at 02:50Z. That is the single observation that would separate a standalone leak (h1) from h1 driven by the LFU change (h2). (3) There is no direct 502 evidence at all. http_5xx_rate is empty and the image-resizer logs timed out (gap:1, gap:2). Nobody tried the caller side, where the 502s are actually produced. upload-api logs would give burst timestamps and the upstream error type (connection reset vs timeout vs upstream 5xx). Without them, the 'waves' are not tied to anything. (4) h2 is ranked too low for being the only change in the window on a direct downstream dependency, yet no thumbnail-cache health or hit-rate data was ever pulled. If thumbnail-cache itself errors or slows in bursts, a cache-side failure would explain the 502s without OOM. (5) h3 is set to 0.0 only because no edge config change was recorded. Payload size was never checked, but it ranks below the items above. h4 (blob-store) is also unchecked, but it lacks any link to the memory signal, so it is deprioritized given the budget.",
+      "follow_ups": [
+        {
+          "agent": "observability",
+          "goal": "Establish the memory and OOM timeline. First, check whether image-resizer memory growth predates or follows the 02:50Z thumbnail-cache deploy. Second, check whether OOM kills and pod restarts precede the ~03:20Z onset and recur at burst intervals in a sawtooth pattern. Query memory_rss_mib_max, oom_kills_total and pod_restarts individually by name at the finest available resolution, and read the container memory limit.",
+          "params": {
+            "service": "image-resizer",
+            "start": "2026-11-13T02:30:00Z",
+            "end": "2026-11-13T04:00:00Z",
+            "metrics": [
+              "memory_rss_mib_max",
+              "oom_kills_total",
+              "pod_restarts",
+              "memory_limit_mib"
+            ]
+          }
+        },
+        {
+          "agent": "observability",
+          "goal": "Get direct 502 evidence from the caller side, since the image-resizer logs time out. Pull upload-api ERROR logs to get the 502 burst timestamps and the upstream error type (connection reset or refused on a dying pod, timeout, or a 5xx returned by image-resizer). Also capture any payload-size fields on failed uploads. If budget remains, retry image-resizer ERROR logs in 5-minute slices from 03:15Z to 03:30Z.",
+          "params": {
+            "service": "upload-api",
+            "start": "2026-11-13T03:10:00Z",
+            "end": "2026-11-13T03:50:00Z",
+            "level": "ERROR"
+          }
+        },
+        {
+          "agent": "observability",
+          "goal": "Test h2 directly. Compare thumbnail-cache hit/miss rate, eviction count, error rate and latency p99 before and after the v2.0.0 (LFU) deploy at 02:50Z. Check whether thumbnail-cache errors or latency spikes line up with the ~03:20Z onset and the bursts.",
+          "params": {
+            "service": "thumbnail-cache",
+            "start": "2026-11-13T02:30:00Z",
+            "end": "2026-11-13T04:00:00Z",
+            "metrics": [
+              "hit_rate",
+              "evictions",
+              "error_rate",
+              "latency_p99"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "loop": 2,
+      "critique": "h1 is the best-supported hypothesis. It rests on direct OOMKilled events (pod -2 at 03:19:51Z and pod -4 at 03:24:37Z, both at the 4096Mi limit with 117h uptime), an upload-api 'connection reset by peer' 502 14 seconds after the first kill, and flat RPS. That is much stronger than timing alone. Three weaknesses remain.\n\n1. **The leak versus the 02:50Z deploy is not settled.** There is no image-resizer memory sample before 03:00Z, so we cannot tell a standalone multi-day leak (h1) from LFU-driven growth after the thumbnail-cache v2.0.0 deploy at 02:50Z (h2). The 117h uptime argues for a leak, but the 3890 MiB reading at 03:00Z is a per-interval max taken after the deploy. A faster slope after 02:50Z would still be consistent with h2 accelerating the failure. This matters for remediation: restarting or rolling pods versus rolling back thumbnail-cache.\n\n2. **The third OOM kill and the wave mechanism are unconfirmed.** The third kill implied by oom_kills_total=3 is inferred, not observed. The 03:31:20Z reset is about 7 minutes after the 03:24:37Z kill, so we have not shown that every burst maps to a kill. The 'pods leak in lockstep' explanation for the waves is therefore only partly shown.\n\n3. **Residual concerns are low risk.** h3 (oversized payloads) and h4 (blob-store) remain unverified, but the reset-by-peer pattern after OOMKills makes them unlikely. The tight 14-second OOM-to-reset match also argues against h3, since a payload-driven OOM would look the same, but flat RPS and 117h uptime fit accumulation better. I accept a residual risk there.\n\nWith 3 tool calls left, one focused check gives the most value: a multi-day memory baseline from before the deploy, plus the timestamps of the OOM kills.",
+      "follow_ups": [
+        {
+          "agent": "observability",
+          "goal": "Separate a standalone leak (h1) from growth accelerated by LFU (h2), and confirm the wave mechanism. (a) Pull image-resizer memory_rss_mib_max from 2026-11-12T00:00:00Z to 2026-11-13T03:00:00Z at the finest resolution available. Compare the slope before and after 02:50Z, and check whether memory was already above about 3.5 GiB before the thumbnail-cache deploy. (b) Pull image-resizer logs (all levels, keyword OOMKilled) for 2026-11-13T03:25:00Z to 2026-11-13T03:40:00Z. Find the timestamp and pod of the third OOM kill, and check whether it precedes the 03:31:20Z upload-api reset.",
+          "params": {
+            "service": "image-resizer",
+            "start": "2026-11-12T00:00:00Z",
+            "end": "2026-11-13T03:40:00Z",
+            "metric": "memory_rss_mib_max",
+            "log_keyword": "OOMKilled",
+            "log_window_start": "2026-11-13T03:25:00Z",
+            "log_window_end": "2026-11-13T03:40:00Z"
+          }
+        }
+      ]
+    }
+  ],
+  "terminated_by": "tool_budget",
+  "report": {
+    "incident_id": "inc04",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "image-resizer",
+        "category": "capacity",
+        "summary": "A slow memory leak in image-resizer brings long-running pods (117h uptime) to the 4096Mi limit, and they are OOMKilled one after another. Each kill drops in-flight connections, so upload-api returns 502 'image-resizer connection reset by peer'. New evidence settles the earlier gaps. (1) The leak predates the 02:50Z thumbnail-cache deploy: max RSS was already 3420 MiB at 2026-11-12T10:00Z and reached 3890 MiB by 03:00Z, about 28 MiB/h. No image-resizer deploy or config change occurred since 11-12. (2) The third kill is observed: pod -1 was OOMKilled at 03:31:02Z, 18s before the 03:31:20Z reset 502. Two kills now map to resets within 18s: pod -2 at 03:19:51Z with a reset at 03:20:05Z, and pod -1 at 03:31:02Z with a reset at 03:31:20Z. Pod -4 was killed at 03:24:37Z. (3) The pattern is a sawtooth: a 2.6s GC pause at 3.96/4.00 GiB at 03:25:10Z, then a restart of pod -2 at 03:33:40Z with heap at 0.61 GiB. RPS stayed flat throughout. Three pods with the same uptime hit the limit about 5-7 minutes apart, which explains the waves. Remaining gap: the pod -4 kill has no matching 502 line in the sparse upload-api results.",
+        "supporting_ids": [
+          "metric:inc04:mem:0003",
+          "metric:inc04:mem:0004",
+          "metric:inc04:mem:0005",
+          "log:inc04:0005",
+          "log:inc04:0006",
+          "log:inc04:0007",
+          "log:inc04:0008",
+          "log:inc04:0009",
+          "log:inc04:0010",
+          "log:inc04:0011",
+          "metric:inc04:oom:0001",
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.8,
+        "final_confidence": 0.8
+      },
+      {
+        "id": "h2",
+        "service": "thumbnail-cache",
+        "category": "bad_deploy",
+        "summary": "The thumbnail-cache v2.0.0 deploy at 02:50Z (eviction changed from LRU to LFU) raised cache misses and sped up image-resizer memory growth toward the OOM kills. Now mostly ruled out as the root cause. Memory was already at 3420 MiB on 11-12 at 10:00Z, well before the deploy, so the leak exists on its own. The only possible support is that the 03:00-03:15Z rise of 170 MiB in 15 min is faster than the pre-deploy average. That figure is a per-interval max that may come from a different pod, so it is weak. thumbnail-cache metrics and logs were empty, so the change in hit rate is unverified. At most this is a minor accelerant.",
+        "supporting_ids": [
+          "deploy:inc04:0001",
+          "dependency:inc04:0002",
+          "metric:inc04:mem:0005"
+        ],
+        "contradicting_ids": [
+          "metric:inc04:mem:0003",
+          "log:inc04:0005",
+          "log:inc04:0009",
+          "log:inc04:0011"
+        ],
+        "proposed_confidence": 0.08,
+        "final_confidence": 0.08
+      },
+      {
+        "id": "h3",
+        "service": "image-resizer",
+        "category": "config_change",
+        "summary": "Oversized uploads, as in the past incident, may be reaching the decoder and causing allocation spikes that OOMKill pods. This is weakened by several facts. Memory grew steadily over about 17h before the incident. RPS was flat. All killed pods had the same 117h uptime. A restarted pod comes back with a small heap (0.61 GiB). No edge-limit change is recorded, and no payload-size data exists.",
+        "supporting_ids": [
+          "past:inc04:0001",
+          "log:inc04:0005",
+          "log:inc04:0009"
+        ],
+        "contradicting_ids": [
+          "metric:inc04:mem:0003",
+          "metric:inc04:mem:0004",
+          "log:inc04:0011",
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ],
+        "proposed_confidence": 0.05,
+        "final_confidence": 0.05
+      },
+      {
+        "id": "h4",
+        "service": "blob-store",
+        "category": "dependency_failure",
+        "summary": "Intermittent blob-store write failures surface as upload 502s. This is contradicted: the 502s name image-resizer resetting the connection, and they follow image-resizer OOMKills within 14-18s. No blob-store data was collected.",
+        "supporting_ids": [
+          "dependency:inc04:0003"
+        ],
+        "contradicting_ids": [
+          "log:inc04:0006",
+          "log:inc04:0010",
+          "log:inc04:0005",
+          "log:inc04:0009"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "Image-resizer memory RSS max was 3890 MiB at 03:00:00Z and rose to 4060 MiB at 03:15:00Z, within the window where the 502 failures began (~03:20Z).",
+        "evidence_ids": [
+          "metric:inc04:mem:0004",
+          "metric:inc04:mem:0005"
+        ]
+      },
+      {
+        "statement": "The oom_kills_total counter for image-resizer was 3 at 03:35:00Z.",
+        "evidence_ids": [
+          "metric:inc04:oom:0001"
+        ]
+      },
+      {
+        "statement": "Requests per second were 212 at 02:45:00Z and 219 at 03:15:00Z, so traffic rose only slightly across the period when memory climbed and OOM kills appeared.",
+        "evidence_ids": [
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ]
+      },
+      {
+        "statement": "The only deploy or config change returned in the 02:45 to 03:30 UTC window, across all services, was thumbnail-cache v2.0.0 at 02:50:00Z, which switches its eviction policy from LRU to LFU.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      },
+      {
+        "statement": "No deploy or config change for image-resizer itself appears in the 02:45 to 03:30 UTC window.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      },
+      {
+        "statement": "The service graph lists upload-api as an upstream caller that depends on image-resizer.",
+        "evidence_ids": [
+          "dependency:inc04:0001"
+        ]
+      },
+      {
+        "statement": "image-resizer memory RSS max rose from 3890 MiB at 03:00:00Z to 4060 MiB at 03:15:00Z, while requests_per_s moved only from 212 at 02:45:00Z to 219 at 03:15:00Z.",
+        "evidence_ids": [
+          "metric:inc04:mem:0004",
+          "metric:inc04:mem:0005",
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ]
+      },
+      {
+        "statement": "image-resizer has two downstream dependencies in the service graph: thumbnail-cache and blob-store.",
+        "evidence_ids": [
+          "dependency:inc04:0002",
+          "dependency:inc04:0003"
+        ]
+      },
+      {
+        "statement": "upload-api depends on image-resizer, making upload-api the upstream caller on the upload path.",
+        "evidence_ids": [
+          "dependency:inc04:0001"
+        ]
+      },
+      {
+        "statement": "The dependency graph returned no edges to or from a gateway or a message queue for image-resizer or upload-api.",
+        "evidence_ids": [
+          "dependency:inc04:0001",
+          "dependency:inc04:0002",
+          "dependency:inc04:0003"
+        ]
+      },
+      {
+        "statement": "The only past incident returned for 502s on uploads involved oversized camera photos (60 MB) crashing the decoder. It was resolved by enforcing a 50 MB upload limit at the edge. Its tags are image, upload, and bad-input.",
+        "evidence_ids": [
+          "past:inc04:0001"
+        ]
+      },
+      {
+        "statement": "No past incident returned matched the bursty-502 pattern on uploads, so none of the returned history directly explains waves of failures a few minutes apart.",
+        "evidence_ids": [
+          "past:inc04:0001"
+        ]
+      },
+      {
+        "statement": "image-resizer memory_rss_mib_max was 3890.0 MiB at 2026-11-13T03:00:00Z.",
+        "evidence_ids": [
+          "metric:inc04:mem:0004"
+        ]
+      },
+      {
+        "statement": "image-resizer memory_rss_mib_max was 4060.0 MiB at 2026-11-13T03:15:00Z, up 170 MiB from the 03:00Z sample.",
+        "evidence_ids": [
+          "metric:inc04:mem:0005"
+        ]
+      },
+      {
+        "statement": "image-resizer oom_kills_total reported 3.0 at 2026-11-13T03:35:00Z.",
+        "evidence_ids": [
+          "metric:inc04:oom:0001"
+        ]
+      },
+      {
+        "statement": "A thumbnail-cache v2.0.0 deploy at 2026-11-13T02:50:00Z switched its eviction policy from LRU to LFU.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      },
+      {
+        "statement": "upload-api logged a 502 on POST /images at 2026-11-13T03:20:05Z with the message 'image-resizer connection reset by peer'.",
+        "evidence_ids": [
+          "log:inc04:0006"
+        ]
+      },
+      {
+        "statement": "upload-api logged the same 502 'image-resizer connection reset by peer' error on POST /images at 2026-11-13T03:31:20Z.",
+        "evidence_ids": [
+          "log:inc04:0010"
+        ]
+      },
+      {
+        "statement": "Pod image-resizer-7c9-2 had its image-resizer container OOMKilled at 2026-11-13T03:19:51Z (memory limit 4096Mi, pod uptime 117h).",
+        "evidence_ids": [
+          "log:inc04:0005"
+        ]
+      },
+      {
+        "statement": "Pod image-resizer-7c9-4 had its image-resizer container OOMKilled at 2026-11-13T03:24:37Z (memory limit 4096Mi, pod uptime 117h).",
+        "evidence_ids": [
+          "log:inc04:0007"
+        ]
+      },
+      {
+        "statement": "The upload-api ERROR log payloads returned for the 502s contain only service, level and message fields. They include no payload-size field, so payload size cannot be correlated with the failures from these logs.",
+        "evidence_ids": [
+          "log:inc04:0006",
+          "log:inc04:0010"
+        ]
+      },
+      {
+        "statement": "A thumbnail-cache deploy to v2.0.0 with the description 'Switch eviction policy from LRU to LFU' is recorded at 2026-11-13T02:50:00Z.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      },
+      {
+        "statement": "The v2.0.0 deploy at 02:50:00Z is about 30 minutes before the reported onset of upload 502s at about 03:20Z, and the deploy targets thumbnail-cache while the affected service in the report is image-resizer.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      },
+      {
+        "statement": "image-resizer memory_rss_mib_max was 3420.0 MiB at 2026-11-12T10:00:00Z, which is below 3.5 GiB (3584 MiB).",
+        "evidence_ids": [
+          "metric:inc04:mem:0003"
+        ]
+      },
+      {
+        "statement": "image-resizer memory_rss_mib_max was 3890.0 MiB at 2026-11-13T03:00:00Z, which is above 3.5 GiB.",
+        "evidence_ids": [
+          "metric:inc04:mem:0004"
+        ]
+      },
+      {
+        "statement": "At 2026-11-13T03:25:10Z image-resizer logged a WARN for a 2.6s GC pause with heap at 3.96 GiB of 4.00 GiB.",
+        "evidence_ids": [
+          "log:inc04:0008"
+        ]
+      },
+      {
+        "statement": "At 2026-11-13T03:31:02Z pod image-resizer-7c9-1 was OOMKilled, with a 4096Mi limit and 117h uptime.",
+        "evidence_ids": [
+          "log:inc04:0009"
+        ]
+      },
+      {
+        "statement": "At 2026-11-13T03:33:40Z image-resizer v3.4.2 started in pod image-resizer-7c9-2 with heap at 0.61 GiB.",
+        "evidence_ids": [
+          "log:inc04:0011"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The 502 bursts are caused by image-resizer pods being OOM-killed and restarting, with in-flight requests failing at the gateway.",
+        "basis": "Memory RSS climbed to about 4 GiB around 03:15Z, the first OOM kill is recorded at 03:35Z, and the 502 onset is about 03:20Z. Timing is consistent but not proven, and the first OOM kill postdates the reported onset.",
+        "how_to_verify": "Retrieve ERROR logs for image-resizer around 03:15Z to 03:45Z (retry the timed-out query or narrow the window), and correlate 502 timestamps with pod restart and OOM events."
+      },
+      {
+        "statement": "Memory growth is a leak or unbounded per-request allocation (for example large images held in memory), not a traffic spike, because RPS was roughly flat.",
+        "basis": "RPS moved only from 212 to 219 while memory rose from 3890 to 4060 MiB.",
+        "how_to_verify": "Pull memory samples at finer granularity and compare against the container memory limit. Check for large-image or concurrency settings and whether memory returns to baseline after pod restarts."
+      },
+      {
+        "statement": "The metrics tool returned only sparse samples (five points), so latency_p99, pod_restarts, cpu, and the full oom_kills series were not returned and may not exist for this service.",
+        "basis": "The unfiltered metrics call returned only requests_per_s, memory_rss_mib_max, and oom_kills_total. Filtered calls for http_5xx_rate returned nothing.",
+        "how_to_verify": "Query latency_p99, pod_restarts, cpu, and memory individually by name, and confirm the metric names exist for this service in the metrics backend."
+      },
+      {
+        "statement": "No deploy or config change caused the regression, since none appears in the deploys tool for the window.",
+        "basis": "The deploys query returned an empty result for image-resizer over 02:30Z to 04:00Z.",
+        "how_to_verify": "Check the deploy and config-change history for upstream services and shared infrastructure (for example node pool or memory limit changes) that deploys may not cover, and confirm the deploys tool covers all change sources."
+      },
+      {
+        "statement": "The 25% failure rate and the wave pattern (bursts every few minutes) come from periodic memory buildup and OOM-driven pod restarts, not from a dependency outage.",
+        "basis": "The bursts were not directly observed. Only one OOM kill point and one memory rise are visible, and dependency health was not checked.",
+        "how_to_verify": "Check dependencies for image-resizer (downstream storage or cache) for errors in the same window, and get the restart timestamps to confirm periodicity."
+      },
+      {
+        "statement": "The deploys query for image-resizer from 02:30Z to 04:00Z returned no deployments or config changes.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The http_5xx_rate metric query for image-resizer over 02:45Z to 04:00Z returned no samples, so the 502 rate could not be confirmed from metrics.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "ERROR-level logs for image-resizer could not be retrieved: both the full-window query and the 03:15Z to 03:45Z query timed out after 3 attempts.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "Autoscaling events for image-resizer and its gateway/load balancer in the window are unknown, because no autoscaling tool exists in this toolset.",
+        "basis": "The available tools do not include an autoscaling source, so the autoscaling part of the t2 request could not be checked.",
+        "how_to_verify": "Pull autoscaler or orchestrator event logs for image-resizer and the gateway/load balancer for 02:45 to 03:30 UTC."
+      },
+      {
+        "statement": "Scheduled jobs (cron) affecting image-resizer or its gateway were not checked and may be a cause of the bursts.",
+        "basis": "No cron or scheduled-job tool is available, so this part of the request has no evidence.",
+        "how_to_verify": "Query the scheduler or cron registry for jobs targeting image-resizer, the gateway, or shared hosts, and check their run times against the 502 bursts."
+      },
+      {
+        "statement": "The thumbnail-cache v2.0.0 eviction change probably does not affect image-resizer, but this is not confirmed.",
+        "basis": "The deploy record shows only a cache eviction policy change and no edge from thumbnail-cache to image-resizer appears in the results. The graph was checked only for image-resizer upstream, not for thumbnail-cache's neighbours.",
+        "how_to_verify": "Check dependencies for thumbnail-cache (both directions) and confirm whether image-resizer calls it or shares its cache or memory."
+      },
+      {
+        "statement": "The gateway or load balancer in front of image-resizer is not identified, so its deploys, config and health events are not covered.",
+        "basis": "The upstream dependency query returned only upload-api. No gateway or load balancer node appeared.",
+        "how_to_verify": "Identify the ingress or gateway service for upload-api to image-resizer traffic, then run the deploys and metrics checks for it over the window."
+      },
+      {
+        "statement": "The memory increase may be unrelated to the 502s, and no 502-rate or error-log data has been checked yet.",
+        "basis": "The metrics call returned four samples for the whole window. It had no 502 counts, and the only memory sample before 03:00 is absent, so the trend is hard to read.",
+        "how_to_verify": "Query image-resizer logs at ERROR and WARN levels from 02:45 to 03:30 UTC, and compare 502 timing with memory and restart events at the 03:00 and 03:15 samples."
+      },
+      {
+        "statement": "The upload write path is upload-api -> image-resizer -> blob-store, with thumbnail-cache possibly in the processing step.",
+        "basis": "Only the listed edges are known. The graph does not state call order or which edges are on the write path.",
+        "how_to_verify": "Confirm the call sequence from upload-api and image-resizer traces or code for the upload handler."
+      },
+      {
+        "statement": "The read/display path does not use image-resizer, so already-uploaded images still displaying is consistent with the read path being separate.",
+        "basis": "The graph lists no read-path consumer of image-resizer, and the symptom says existing images still display. Whether thumbnail-cache or blob-store serve reads is not shown.",
+        "how_to_verify": "Check whether the display path (CDN or read service) calls blob-store or thumbnail-cache directly, using dependencies on those services with direction both."
+      },
+      {
+        "statement": "The gateway that sits in front of upload-api is not in the graph, so gateway-level 502s cannot be ruled in or out from these results.",
+        "basis": "Dependency queries for image-resizer and upload-api returned no gateway edge.",
+        "how_to_verify": "Query dependencies for the gateway service, and check its logs for 502s in the window 02:45 to 04:00 UTC."
+      },
+      {
+        "statement": "Queues are not part of the returned graph, so a queue-based cause is not covered by this analysis.",
+        "basis": "No queue edge appeared in the returned dependencies.",
+        "how_to_verify": "Confirm whether image-resizer consumes from a queue, either through a graph query on a queue service name or by checking its configuration."
+      },
+      {
+        "statement": "The 25% failure rate and few-minute bursts are not explained by the available dependency data.",
+        "basis": "The dependency and past-incident results contain no timing or rate information.",
+        "how_to_verify": "Pull image-resizer and blob-store logs at ERROR level and metrics for 5xx rate and latency across the window, and check deploys and config changes near 03:20 UTC."
+      },
+      {
+        "statement": "The oversized-photo hypothesis from past:inc04:0001 is unverified. A 50 MB edge limit may have been removed or changed, or a new input pattern may be reaching the decoder.",
+        "basis": "The prior incident is a similar symptom (502s on uploads), but the current report includes no information on payload size.",
+        "how_to_verify": "Check the edge upload-size limit config in deploys, and sample rejected or failed upload sizes in image-resizer logs."
+      },
+      {
+        "statement": "The dependency and past-incident results may be incomplete. Only a single past incident matched, and the graph may not list every edge.",
+        "basis": "Each query returned omitted: 0 and a single matching record, which may reflect narrow keywords or sparse data.",
+        "how_to_verify": "Broaden past_incidents keywords (for example 'decoder', '502', 'burst') and widen the time window in logs and metrics queries."
+      },
+      {
+        "statement": "The 502s are generated where upload-api or a gateway calls image-resizer, so they reflect image-resizer pod failures or timeouts.",
+        "basis": "The graph shows upload-api -> image-resizer, and no gateway is identified. http_5xx_rate and the logs were unavailable (gap:1, gap:2).",
+        "how_to_verify": "Retry the image-resizer ERROR log query in narrow 5-minute slices around 03:15-03:45Z. Correlate 502 timestamps in upload-api with image-resizer pod restart and OOM events."
+      },
+      {
+        "statement": "image-resizer memory near 4060 MiB is close to the container limit (presumably 4 GiB).",
+        "basis": "OOM kills appeared shortly after memory RSS max reached ~4060 MiB.",
+        "how_to_verify": "Read the image-resizer container memory limit and get the per-pod RSS series at 1-minute resolution with restart markers. Check whether memory resets after each restart (sawtooth = h1)."
+      },
+      {
+        "statement": "image-resizer's behaviour depends on thumbnail-cache hit rate, so the LFU change could increase its work or memory.",
+        "basis": "The graph edge image-resizer -> thumbnail-cache exists, but call semantics are unknown.",
+        "how_to_verify": "Compare thumbnail-cache hit/miss rate and eviction counts before and after 02:50Z. Check whether image-resizer memory began rising after 02:50Z. Test a rollback of thumbnail-cache to v1 (LRU) or the eviction policy, and watch whether 502s and memory growth stop (distinguishes h2 from a standalone leak in h1)."
+      },
+      {
+        "statement": "Upload size distribution is unchanged and the 50 MB edge limit is still enforced.",
+        "basis": "No config change for the edge appears in deploy records, and there is no payload-size data.",
+        "how_to_verify": "Check the edge upload-size limit config and sample request sizes of failed uploads versus successful ones (confirms or rejects h3)."
+      },
+      {
+        "statement": "blob-store is healthy on the write path.",
+        "basis": "No blob-store metrics or logs were collected.",
+        "how_to_verify": "Query blob-store write error rate and latency p99 for 02:45-04:00Z and check them against the 502 burst times (h4)."
+      },
+      {
+        "statement": "Memory growth in image-resizer may have started before the 02:50Z thumbnail-cache deploy, but this cannot be determined.",
+        "basis": "The first memory_rss_mib_max sample in the 02:30Z-04:00Z window is at 03:00Z, so there is no pre-deploy baseline.",
+        "how_to_verify": "Re-query memory_rss_mib_max for image-resizer from 02:30Z to 03:00Z at the finest available resolution, or check raw container metrics for that period."
+      },
+      {
+        "statement": "The oom_kills_total value of 3.0 at 03:35Z may be cumulative and may include kills before the 03:20Z onset that were not sampled.",
+        "basis": "Only one oom_kills_total sample was returned, with no earlier timestamps, so the kill times and the sawtooth pattern cannot be established.",
+        "how_to_verify": "Query oom_kills_total at finer resolution and check image-resizer ERROR/WARN logs and orchestrator events (OOMKilled) for timestamps of each kill."
+      },
+      {
+        "statement": "No pod restart data is available, so whether restarts precede the 03:20Z onset or recur at burst intervals is unknown.",
+        "basis": "The pod_restarts query returned no evidence rows.",
+        "how_to_verify": "Re-query pod_restarts for image-resizer, or confirm from the orchestrator restart count for each pod over 02:30Z-04:00Z; determine whether the empty result is a metric gap or zero restarts."
+      },
+      {
+        "statement": "The image-resizer container memory limit is unknown, so it cannot be determined whether the 3890-4060 MiB RSS readings approach an OOM threshold.",
+        "basis": "The memory_limit_mib query returned no evidence rows.",
+        "how_to_verify": "Read the container memory limit from the image-resizer deployment spec or the orchestrator for the active pods."
+      },
+      {
+        "statement": "No image-resizer deploy or config change occurred in the window, so any change is from another service.",
+        "basis": "The service-filtered deploys query for image-resizer returned no rows; the unfiltered query returned only the thumbnail-cache deploy. This is a negative result and cites no evidence ID.",
+        "how_to_verify": "Check the image-resizer release history and config change log for 02:30Z-04:00Z."
+      },
+      {
+        "statement": "The thumbnail-cache deploy is causally linked to image-resizer memory growth or the OOM kills.",
+        "basis": "The dependency graph was not queried, so the call relationship between thumbnail-cache and image-resizer is unconfirmed; the timing alone does not establish causation.",
+        "how_to_verify": "Query dependencies for image-resizer (both directions) to see whether it calls or is called by thumbnail-cache, then compare memory behavior before and after 02:50Z."
+      },
+      {
+        "statement": "The 170 MiB RSS increase between 03:00Z and 03:15Z is a two-point trend, not a confirmed growth rate.",
+        "basis": "Only two memory_rss_mib_max samples were returned, and the metric is a per-interval maximum.",
+        "how_to_verify": "Obtain memory samples at a finer interval across 02:30Z-03:35Z to confirm the slope and any drop-and-reset pattern."
+      },
+      {
+        "statement": "The two OOMKills of pods image-resizer-7c9-2 and image-resizer-7c9-4 are the cause of the 'connection reset by peer' 502s. The OOMKill precedes each reset (03:19:51 to 03:20:05, and 03:24:37 to 03:31:20), but the reset-to-OOM link is inferred from timing only.",
+        "basis": "Temporal ordering of the OOMKilled events and the upload-api 502 log lines. The 03:24:37 OOM and 03:31:20 reset gap is about 7 minutes, so the link is not tight.",
+        "how_to_verify": "Check pod restart counts and container memory metrics for image-resizer pods over 03:00Z to 04:00Z, and confirm that connection resets coincide with pod restarts or dying pods."
+      },
+      {
+        "statement": "The 'waves' pattern (bursts a few minutes apart) is produced by individual pods being OOMKilled and restarted in sequence, rather than by a single fleet-wide event.",
+        "basis": "Two OOMKills on different pods (-2 at 03:19:51Z, -4 at 03:24:37Z) about 5 minutes apart, which roughly matches the reported burst spacing. Only two events were found, so this is weakly supported.",
+        "how_to_verify": "Get the full list of image-resizer OOMKill and restart events for 02:45Z to 04:00Z, and check whether the bursts line up with them."
+      },
+      {
+        "statement": "The upload-api ERROR query is incomplete. It returned only two 502 entries for 03:10Z to 03:50Z, while the symptoms report about 25% of uploads failing from about 03:20Z.",
+        "basis": "The log result shows 2 entries and omitted=0, which is inconsistent with a 25% failure rate over a 30-minute period. The result may be missing rows, failures may be logged at a different level or under a different message, or the failures may not be logged as ERROR.",
+        "how_to_verify": "Re-query upload-api at WARN and INFO levels for 03:10Z to 03:50Z, and compare the upload-api 5xx request count metric against the failure rate in the report."
+      },
+      {
+        "statement": "The image-resizer container did not log ERROR entries between 03:25Z and 03:30Z, but this is not confirmed as a true absence of errors.",
+        "basis": "The 03:25Z to 03:30Z ERROR query returned an empty evidence list with attempts=1 and omitted=0. Log loss during pod restarts or a query gap is also possible.",
+        "how_to_verify": "Re-query image-resizer logs for 03:25Z to 03:30Z at all levels, and check pod status and restart timestamps for that interval."
+      },
+      {
+        "statement": "Payload size is not the cause of the failures, or at least is not shown to be. Payload-size data is absent from the returned logs, so the question is unresolved and not disproven.",
+        "basis": "The upload-api ERROR payloads carry no size field, and no other payload-size source has been queried.",
+        "how_to_verify": "Obtain request size from upload-api INFO or access logs or request metrics for failed and successful POST /images calls, and compare size distributions for the 502s and the successful uploads."
+      },
+      {
+        "statement": "Already-uploaded images still display because stored images are served from storage that is separate from the image-resizer pods, so the outage affects only the write (resize) path.",
+        "basis": "Symptom report only. This investigation did not query the image read or serving path.",
+        "how_to_verify": "Check the read or CDN path for stored images and confirm it does not call image-resizer."
+      },
+      {
+        "statement": "The thumbnail-cache metrics queries (unfiltered, hit_rate, and evictions) returned no samples for 02:30Z to 04:00Z, so hit rate, eviction count, error rate and p99 latency before and after the 02:50Z deploy could not be compared. The hypothesis that LFU caused the change is neither confirmed nor ruled out.",
+        "basis": "Each metrics call returned status ok with evidence: [] and omitted: 0. The tool gives no reason for the empty result.",
+        "how_to_verify": "Confirm the metric names and service identifier that thumbnail-cache exports, check the metrics store for ingestion gaps in this window, and re-query error_rate and latency_p99 for thumbnail-cache and for image-resizer."
+      },
+      {
+        "statement": "No thumbnail-cache ERROR-level log lines exist in 02:30Z to 04:00Z, so thumbnail-cache errors cannot be tied to the ~03:20Z onset or to the bursts.",
+        "basis": "The ERROR-level logs query returned status ok with evidence: [] and no rows.",
+        "how_to_verify": "Query image-resizer logs for 502s and upstream timeouts in the window, and check whether thumbnail-cache logs are ingested at all (e.g., an unfiltered logs query for the same service and window)."
+      },
+      {
+        "statement": "The service graph was not checked, so it is unknown whether image-resizer calls thumbnail-cache, and whether a 502 would be returned on a cache miss path.",
+        "basis": "The dependencies tool was not called during this task.",
+        "how_to_verify": "Call dependencies for image-resizer with direction 'downstream' and check for a thumbnail-cache edge."
+      },
+      {
+        "statement": "The third OOM kill counted by oom_kills_total=3 at 03:35Z happened shortly before the 03:31:20Z reset 502, on a pod other than -2 or -4.",
+        "basis": "Two OOMKilled events were found (03:19:51Z, 03:24:37Z), but the counter reads 3. The 03:31:20Z reset has no matching kill.",
+        "how_to_verify": "List all OOMKilled and restart events for image-resizer pods from 02:45Z to 04:00Z, and match each one to upload-api 502 timestamps."
+      },
+      {
+        "statement": "All image-resizer pods were started around the same time (~117h ago) and leak at a similar rate, so they reach 4096Mi in close succession, which produces the waves.",
+        "basis": "Both OOMKilled pods report 117h uptime and were killed about 5 minutes apart.",
+        "how_to_verify": "Get the start time and per-pod RSS series for every pod. Confirm a sawtooth pattern where memory drops after each restart and then climbs steadily."
+      },
+      {
+        "statement": "Memory growth began before the 02:50Z thumbnail-cache deploy, which would separate a standalone leak (h1) from growth driven by LFU (h2).",
+        "basis": "Pods have 117h uptime and were already at 3890 MiB by 03:00Z. Reaching that level only 10 minutes after the deploy would need very fast growth, but no pre-03:00Z sample exists.",
+        "how_to_verify": "Pull image-resizer RSS over the past several days, compare the slope before and after 02:50Z, and compare thumbnail-cache hit rate across the deploy."
+      },
+      {
+        "statement": "The 25% failure rate is larger than the two upload-api ERROR lines suggest; the log query returned only a subset.",
+        "basis": "Only 2 entries were returned for 03:10Z to 03:50Z, which does not match ~25% of uploads failing.",
+        "how_to_verify": "Query the upload-api 5xx count metric or access logs at all levels, and plot the burst times."
+      },
+      {
+        "statement": "The deploys query for image-resizer from 2026-11-12T00:00:00Z to 2026-11-13T03:40:00Z returned no deployment or config-change records.",
+        "basis": "Stated as a fact by observability (c2.1), but cites evidence IDs no tool returned in this run: ['deploys:inc04:empty']. No valid citations.",
+        "how_to_verify": "Re-run the tool query that should return these rows and check the statement against the evidence IDs it actually returns."
+      },
+      {
+        "statement": "The third OOM kill cannot be identified from the evidence. The log query used level=null and returned only one OOMKilled line (03:31:02Z, pod image-resizer-7c9-1) in the 03:25–03:40Z window, so the claimed three-kill wave is not confirmed.",
+        "basis": "Only one OOMKilled-related ERROR line was returned; no keyword filter was applied to the query, and no other kill lines appear.",
+        "how_to_verify": "Re-query image-resizer logs for 03:25–03:40Z filtered on OOMKilled and count kill events by pod and timestamp."
+      },
+      {
+        "statement": "The 03:31:20Z upload-api reset is not in the evidence. Its timing relative to the OOM kill is taken from the incident report only. The verified OOM at 03:31:02Z precedes 03:31:20Z by 18 seconds.",
+        "basis": "Incident report timestamp; the upload-api reset was not queried.",
+        "how_to_verify": "Pull upload-api logs and metrics around 03:31:20Z and confirm the reset time and its trigger."
+      },
+      {
+        "statement": "The leak versus LFU-accelerated growth question cannot be answered. Only two memory samples exist, 25 hours apart, so no slope can be computed before or after 02:50Z.",
+        "basis": "metrics query returned two points (10:00Z on 11-12 and 03:00Z on 11-13) with no samples near 02:50Z.",
+        "how_to_verify": "Pull memory_rss_mib_max at the finest resolution for 2026-11-13T00:00Z–03:40Z and fit slopes before and after 02:50Z. Also pull cache eviction or LFU metrics if available."
+      },
+      {
+        "statement": "Whether memory crossed 3.5 GiB before the thumbnail-cache deploy is unknown. The threshold was crossed between the 10:00Z sample on 11-12 and the 03:00Z sample on 11-13, but the deploy time is not in the evidence and the deploy query returned nothing.",
+        "basis": "Metric samples bracket the crossing; deploys query returned no records; thumbnail-cache deploy time comes only from the task framing.",
+        "how_to_verify": "Confirm the thumbnail-cache deploy timestamp from the CD system or a broader deploy query, then compare with a fine-grained memory series."
+      },
+      {
+        "statement": "The wave mechanism (bursts of 502s a few minutes apart driven by serial OOM restarts) is not confirmed by this evidence. The only verified restart is pod -1 at 03:31:02Z, followed by pod -2 starting at 03:33:40Z.",
+        "basis": "Single OOM event and single restart log in the window; no 502 or upload-level logs were queried.",
+        "how_to_verify": "Query image-resizer 502 counts and pod restart events in 02:45–04:00Z at fine resolution and align them with OOM and restart timestamps."
+      },
+      {
+        "statement": "Memory data is coarse. Sampling intervals are unknown and gaps may exist, so the 3890 MiB value at 03:00Z may understate or overstate the peak.",
+        "basis": "metrics returned only two points for a 27-hour window with closes_gaps empty.",
+        "how_to_verify": "Request metrics at the highest available resolution with the sampling interval specified."
+      },
+      {
+        "statement": "The memory_rss_mib_max series reflects the same long-lived pods across 11-12 and 11-13, so the pre-deploy 3420 MiB reading shows the leak was already under way.",
+        "basis": "Killed pods report 117h uptime, which means they were started before 2026-11-12T10:00Z.",
+        "how_to_verify": "Pull per-pod RSS at fine resolution for the past several days and confirm a steady slope with no change in rate at 02:50Z."
+      },
+      {
+        "statement": "The pod -4 kill at 03:24:37Z also produced 502s, which are missing only because the upload-api log results were sparse.",
+        "basis": "Only 2 upload-api 502 lines were returned, while about 25% of requests failed.",
+        "how_to_verify": "Query upload-api 5xx counts or access logs at all levels for 03:20-03:35Z and align them with each OOMKill."
+      },
+      {
+        "statement": "Restarting or rolling the image-resizer pods will stop the waves for now, and a fix for the leak is still needed.",
+        "basis": "Restarted pod -2 came back with heap at 0.61 GiB.",
+        "how_to_verify": "Roll the remaining old pods, confirm the 502s stop, and track the RSS slope after restart."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Recommend a rolling restart of the long-running image-resizer pods (oldest uptime first, staggered so capacity stays up) as a short-term mitigation, starting with the pods nearing the 4096Mi limit.",
+        "rationale": "The 117h-uptime pods are hitting the memory limit and being OOMKilled in sequence. Restarting them clears the accumulated heap (a restarted pod came back at 0.61 GiB), which should stop the 502 waves until the leak is fixed.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend temporarily raising the image-resizer memory limit above 4096Mi, or adding replicas, as an alternative mitigation if restarts alone cannot keep up.",
+        "rationale": "The leak grows about 28 MiB/h, so a higher ceiling buys time. This is a capacity stopgap, not a fix, and it should be paired with leak investigation.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend capturing a heap profile or heap dump from a pod that is well into its uptime but has not yet reached the limit, and comparing it with a freshly restarted pod, to identify the source of the leak.",
+        "rationale": "The report establishes that the leak predates the 02:50Z thumbnail-cache deploy and is steady at about 28 MiB/h. Locating the allocation site is needed for a durable fix. The pod -4 kill still lacks a matching 502 line, so the heap data should also help confirm the kill-to-reset mapping.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend confirming the pod -4 kill against upload-api logs for the 03:24:37Z window, using a wider search than the sparse results already collected.",
+        "rationale": "This is the one remaining gap in the h1 causal chain. Confirming it would strengthen the mapping from OOMKill to connection reset and rule out other causes of 502s in that window.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend collecting thumbnail-cache hit-rate and eviction metrics for the 02:50Z to 03:20Z period, and only considering a rollback of v2.0.0 to LRU if those metrics show a clear regression.",
+        "rationale": "h2 is largely ruled out because the leak predates the deploy. The thumbnail-cache metrics and logs were empty, so the hit-rate change is unverified. A rollback is not justified by current evidence.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Recommend checking the edge upload size limits and the image decoder's allocation logs for unusually large payloads during the incident window.",
+        "rationale": "This verifies or rules out the oversized-upload hypothesis. Current evidence weighs against it (steady memory growth over about 17h, flat RPS, uniform uptime), so this is a low-priority check.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "Recommend pulling blob-store write error and latency metrics for the window to confirm that blob-store is not contributing.",
+        "rationale": "No blob-store data was collected, and the 502s name image-resizer resets. This closes the gap on h4 with a low-cost check.",
+        "hypothesis_id": "h4"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 30,
+      "llm_calls": 46,
+      "tokens_in": 142110,
+      "tokens_out": 42783,
+      "cache_tokens": 0,
+      "latency_s": 241.894
+    },
+    "terminated_by": "tool_budget",
+    "rule_adjustments": [
+      {
+        "rule": "fact_demoted",
+        "subject": "c2.1/fact[5]",
+        "detail": "Moved to assumptions: cites unknown evidence IDs ['deploys:inc04:empty']",
+        "ids": [
+          "deploys:inc04:empty"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "hypothesis_ids_dropped",
+        "subject": "h1",
+        "detail": "Dropped evidence IDs no tool returned in this run: ['deploys:inc04:empty']",
+        "ids": [
+          "deploys:inc04:empty"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in t1: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in t1: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  }
+}

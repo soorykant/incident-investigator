@@ -1,0 +1,21 @@
+{
+  "incident_id": "inc03",
+  "expected_outcome": "root_cause",
+  "service": "avatar-store",
+  "category": "dependency_failure",
+  "key_evidence_ids": ["log:inc03:0003", "log:inc03:0004", "log:inc03:0011", "metric:inc03:avok:0002", "dependency:inc03:0001"],
+  "traps": [
+    {
+      "description": "profile-svc v1.8.0 shipped 30 minutes earlier with a new avatar renderer, a nil-pointer panic in that renderer appears, and a past incident blames a renderer release; but v1.8.0 served cleanly for 30 minutes, the panic follows the avatar-store timeouts, and feed-svc (not deployed) fails against avatar-store too",
+      "misleading_evidence_ids": ["deploy:inc03:0001", "log:inc03:0005", "past:inc03:0001"]
+    },
+    {
+      "description": "profile-svc pods restart and fail liveness, which looks like profile-svc itself is broken; the restarts happen because its handlers block on avatar-store",
+      "misleading_evidence_ids": ["log:inc03:0007", "metric:inc03:restarts:0001"]
+    },
+    {
+      "description": "avatar-store's shallow health check stays green, which seems to clear it; its request success rate tells the opposite story",
+      "misleading_evidence_ids": ["log:inc03:0010", "metric:inc03:avhealth:0001"]
+    }
+  ]
+}

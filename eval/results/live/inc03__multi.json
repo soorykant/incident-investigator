@@ -1,0 +1,654 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc03",
+  "system": "multi",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T06:47:56.329788Z",
+  "report": {
+    "incident_id": "inc03",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "avatar-store",
+        "category": "dependency_failure",
+        "summary": "avatar-store's storage volume vol-data-2 was remounted read-only after I/O errors at 09:11:48Z, which made shard 2 unavailable. That is about 30s before profile-svc's first ERROR. Reads on shard 2 then failed with EIO or hung, and request success fell from 99.9% to 61%. The /healthz endpoint kept returning 200 because the process was still up, so avatar-store was never pulled out of rotation.\n\nIn profile-svc, calls to avatar-store waited out the 3000ms timeout and filled the 64-handler pool. Liveness probes then failed with 'waiting on avatar-store', the kubelet restarted pods, and users got about 40% 503s.\n\nThis fault is independent of the profile-svc deploy:\n- The first avatar-store error is a storage failure, not overload.\n- feed-svc, which does not run v1.8.0, also hit avatar-store timeouts at 09:17:20Z.\n- profile-svc error_rate was normal at 09:00Z, 20 minutes after v1.8.0 shipped.\n\nWe still don't know what caused the I/O errors on the volume. Infra and storage changes were not checked (gap:1).\n\nMitigation:\n- Fail over or restore shard 2 / vol-data-2.\n- Make avatar-store health checks shard-aware.\n- Add a circuit breaker or a short timeout with an initials fallback for avatars in profile-svc.\n- Decouple the liveness probe from handler-pool saturation.",
+        "supporting_ids": [
+          "log:inc03:0003",
+          "log:inc03:0008",
+          "log:inc03:0010",
+          "log:inc03:0011",
+          "log:inc03:0004",
+          "log:inc03:0006",
+          "log:inc03:0009",
+          "log:inc03:0014",
+          "metric:inc03:avok:0001",
+          "metric:inc03:avok:0002",
+          "metric:inc03:avhealth:0001",
+          "metric:inc03:err:0001",
+          "metric:inc03:err:0002",
+          "dependency:inc03:0001",
+          "dependency:inc03:0003",
+          "log:inc03:0007",
+          "metric:inc03:restarts:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc03:0005",
+          "past:inc03:0001"
+        ],
+        "proposed_confidence": 0.75,
+        "final_confidence": 0.75
+      },
+      {
+        "id": "h2",
+        "service": "profile-svc",
+        "category": "bad_deploy",
+        "summary": "This hypothesis says the v1.8.0 deploy at 08:40Z ('New avatar thumbnail renderer') is the root cause. It would work one of two ways:\n- Its nil-pointer bug in render.AvatarThumbnail crash-loops pods.\n- Its new call pattern overloaded avatar-store.\n\nThe new evidence weakens it substantially:\n- avatar-store's degradation begins with a volume I/O failure, read-only remount and EIO, not with load symptoms.\n- A second caller, feed-svc, was also affected.\n- profile-svc errors were 0.3% at 09:00Z.\n\nThe deploy-driven-load variant still lacks a direct test, because no avatar-store request rate or rollout progress data exists, so it cannot be fully excluded.\n\nThe likely role of v1.8.0 is an amplifier. The renderer probably dereferences a nil avatar when the fetch fails, so avatar-store errors become panics and contribute extra restarts. That would explain why pod_restarts reached 7 while the kubelet log shows a count of 3.\n\nMitigation: rolling back profile-svc is still worthwhile to remove the panic-driven restarts, but it will not restore avatars.",
+        "supporting_ids": [
+          "deploy:inc03:0001",
+          "log:inc03:0005",
+          "past:inc03:0001",
+          "log:inc03:0007",
+          "metric:inc03:restarts:0001",
+          "metric:inc03:err:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc03:err:0001",
+          "log:inc03:0004",
+          "log:inc03:0006",
+          "log:inc03:0003",
+          "log:inc03:0008",
+          "log:inc03:0011",
+          "dependency:inc03:0003"
+        ],
+        "proposed_confidence": 0.15,
+        "final_confidence": 0.05
+      },
+      {
+        "id": "h3",
+        "service": "profile-svc",
+        "category": "capacity",
+        "summary": "This hypothesis says profile-svc ran out of resources (OOM) or received a traffic surge from web-frontend, and that this caused the restarts and 503s. There is no direct evidence for it. Memory, CPU and request-rate series are missing, and no OOMKilled reasons were found. The pool-exhaustion message attributes the busy handlers to waiting on avatar-store, which now has its own documented storage failure. Checking the kubelet termination reasons will settle it.",
+        "supporting_ids": [
+          "log:inc03:0006",
+          "log:inc03:0007",
+          "metric:inc03:restarts:0001",
+          "dependency:inc03:0004"
+        ],
+        "contradicting_ids": [
+          "log:inc03:0004",
+          "log:inc03:0003",
+          "log:inc03:0011"
+        ],
+        "proposed_confidence": 0.04,
+        "final_confidence": 0.04
+      }
+    ],
+    "facts": [
+      {
+        "statement": "The earliest ERROR log for profile-svc in the window is at 09:12:20Z: GET /profile/u-2290 returned 503 because avatar-store GET /avatars/u-2290 timed out after 3000ms.",
+        "evidence_ids": [
+          "log:inc03:0004"
+        ]
+      },
+      {
+        "statement": "At 09:12:41Z profile-svc logged a panic: nil pointer dereference in render.AvatarThumbnail, reported as version v1.8.0.",
+        "evidence_ids": [
+          "log:inc03:0005"
+        ]
+      },
+      {
+        "statement": "A liveness probe failed at 09:13:05Z with the message 'handler pool exhausted (64/64 busy waiting on avatar-store)'.",
+        "evidence_ids": [
+          "log:inc03:0006"
+        ]
+      },
+      {
+        "statement": "At 09:13:30Z the kubelet restarted a container, logging restart count 3.",
+        "evidence_ids": [
+          "log:inc03:0007"
+        ]
+      },
+      {
+        "statement": "Avatar-store timeouts continued after onset: 503s with 'avatar-store timed out after 3000ms' were logged at 09:15:12Z and 09:26:31Z.",
+        "evidence_ids": [
+          "log:inc03:0009",
+          "log:inc03:0014"
+        ]
+      },
+      {
+        "statement": "The error_rate_pct metric was 0.3 at 09:00:00Z and 38.0 at 09:15:00Z, consistent with the reported onset near 09:12 UTC and the ~40% error rate in the symptoms.",
+        "evidence_ids": [
+          "metric:inc03:err:0001",
+          "metric:inc03:err:0002"
+        ]
+      },
+      {
+        "statement": "The pod_restarts metric was 7.0 at 09:15:00Z.",
+        "evidence_ids": [
+          "metric:inc03:restarts:0001"
+        ]
+      },
+      {
+        "statement": "profile-svc deployed v1.8.0 (\"New avatar thumbnail renderer\") at 2026-11-12T08:40:00Z, about 32 minutes before the 09:12 UTC symptom onset. It is the only profile-svc deploy in the 08:30-09:50 window.",
+        "evidence_ids": [
+          "deploy:inc03:0001"
+        ]
+      },
+      {
+        "statement": "The dependency graph shows profile-svc calls avatar-store and user-db downstream, and web-frontend calls profile-svc upstream.",
+        "evidence_ids": [
+          "dependency:inc03:0001",
+          "dependency:inc03:0002",
+          "dependency:inc03:0004"
+        ]
+      },
+      {
+        "statement": "profile-svc has two downstream dependencies in the service graph: avatar-store and user-db.",
+        "evidence_ids": [
+          "dependency:inc03:0001",
+          "dependency:inc03:0002"
+        ]
+      },
+      {
+        "statement": "web-frontend depends on profile-svc, so profile-svc is an upstream dependency of web-frontend.",
+        "evidence_ids": [
+          "dependency:inc03:0004"
+        ]
+      },
+      {
+        "statement": "avatar-store request_success_pct was 99.9 at 09:00Z and dropped to 61.0 at 09:15Z.",
+        "evidence_ids": [
+          "metric:inc03:avok:0001",
+          "metric:inc03:avok:0002"
+        ]
+      },
+      {
+        "statement": "avatar-store health_check_ok was 1.0 at 09:15Z, so its health check passed while its request success rate was 61.0 in the same sample window.",
+        "evidence_ids": [
+          "metric:inc03:avhealth:0001",
+          "metric:inc03:avok:0002"
+        ]
+      },
+      {
+        "statement": "A past incident (profile pages crash-looping after a renderer release) had a nil pointer bug in the page renderer, and it was resolved by rolling back profile-svc. Its tags include profile, crashloop, and deploy.",
+        "evidence_ids": [
+          "past:inc03:0001"
+        ]
+      },
+      {
+        "statement": "avatar-store request_success_pct was 99.9 at 09:00:00Z.",
+        "evidence_ids": [
+          "metric:inc03:avok:0001"
+        ]
+      },
+      {
+        "statement": "avatar-store request_success_pct fell to 61.0 at 09:15:00Z.",
+        "evidence_ids": [
+          "metric:inc03:avok:0002"
+        ]
+      },
+      {
+        "statement": "avatar-store health_check_ok was 1.0 at 09:15:00Z, so the health check passed while success rate was 61%.",
+        "evidence_ids": [
+          "metric:inc03:avhealth:0001"
+        ]
+      },
+      {
+        "statement": "At 09:11:48Z avatar-store logged an ERROR that volume vol-data-2 was remounted read-only after I/O errors and shard 2 was unavailable.",
+        "evidence_ids": [
+          "log:inc03:0003"
+        ]
+      },
+      {
+        "statement": "At 09:14:02Z avatar-store logged an ERROR that GET /avatars/u-3310 failed due to a shard 2 read error (EIO).",
+        "evidence_ids": [
+          "log:inc03:0008"
+        ]
+      },
+      {
+        "statement": "At 09:16:00Z avatar-store logged INFO that GET /healthz returned 200 (process up), so the process was alive while shard 2 was failing.",
+        "evidence_ids": [
+          "log:inc03:0010"
+        ]
+      },
+      {
+        "statement": "A profile-svc deploy of v1.8.0, described as 'New avatar thumbnail renderer', is recorded at 2026-11-12T08:40:00Z.",
+        "evidence_ids": [
+          "deploy:inc03:0001"
+        ]
+      },
+      {
+        "statement": "profile-svc error_rate_pct was 0.3 at 09:00:00Z and 38.0 at 09:15:00Z.",
+        "evidence_ids": [
+          "metric:inc03:err:0001",
+          "metric:inc03:err:0002"
+        ]
+      },
+      {
+        "statement": "profile-svc pod_restarts was 7.0 at 09:15:00Z.",
+        "evidence_ids": [
+          "metric:inc03:restarts:0001"
+        ]
+      },
+      {
+        "statement": "At 09:12:20Z, profile-svc logged a 503 for GET /profile/u-2290 because avatar-store GET /avatars/u-2290 timed out after 3000ms.",
+        "evidence_ids": [
+          "log:inc03:0004"
+        ]
+      },
+      {
+        "statement": "At 09:12:41Z, profile-svc logged 'panic: nil pointer dereference in render.AvatarThumbnail (v1.8.0)'.",
+        "evidence_ids": [
+          "log:inc03:0005"
+        ]
+      },
+      {
+        "statement": "Further avatar-store timeouts causing profile 503s were logged at 09:15:12Z (u-3310) and 09:26:31Z (u-7781), each with a 3000ms timeout.",
+        "evidence_ids": [
+          "log:inc03:0009",
+          "log:inc03:0014"
+        ]
+      },
+      {
+        "statement": "avatar-store has two upstream callers in the service graph: profile-svc and feed-svc.",
+        "evidence_ids": [
+          "dependency:inc03:0001",
+          "dependency:inc03:0003"
+        ]
+      },
+      {
+        "statement": "feed-svc logged an ERROR at 09:17:20Z: thumbnail fetch from avatar-store timed out after 2000ms and fell back to initials.",
+        "evidence_ids": [
+          "log:inc03:0011"
+        ]
+      },
+      {
+        "statement": "avatar-store request_success_pct was 99.9 at 09:00Z and fell to 61.0 at 09:15Z.",
+        "evidence_ids": [
+          "metric:inc03:avok:0001",
+          "metric:inc03:avok:0002"
+        ]
+      },
+      {
+        "statement": "avatar-store health_check_ok was 1.0 at 09:15Z, the same sample at which request_success_pct was 61.0.",
+        "evidence_ids": [
+          "metric:inc03:avhealth:0001",
+          "metric:inc03:avok:0002"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The onset is about 09:12:20Z, the first ERROR log in the window. This is the first ERROR returned by the tool and may not be the true first failure, since the ERROR query did not include WARN or INFO.",
+        "basis": "Earliest ERROR timestamp returned, with error_rate rising between the 09:00 and 09:15 samples.",
+        "how_to_verify": "Query profile-svc error_rate_pct and 5xx rate at 1-minute resolution between 09:05Z and 09:20Z."
+      },
+      {
+        "statement": "The v1.8.0 panic in render.AvatarThumbnail is a contributing cause, and the avatar-store timeouts are the trigger for handler pool exhaustion. The causal order is not established.",
+        "basis": "Timing: avatar timeouts begin at 09:12:20Z, the panic at 09:12:41Z, the probe failure at 09:13:05Z. The panic message names v1.8.0 but the deploy record was not checked.",
+        "how_to_verify": "Call deploys for profile-svc around 08:00–09:12Z to confirm the v1.8.0 rollout time. Check avatar-store latency and errors over the same window."
+      },
+      {
+        "statement": "Restart reasons are not confirmed. No OOMKilled, probe-failure, or exit-code evidence was returned for each restart, and the liveness probe failure is only one of the restart causes.",
+        "basis": "Only the WARN log and one restart log were returned. The restart log does not state a reason.",
+        "how_to_verify": "Pull kubelet/pod events and last-state termination reasons (OOMKilled, exit code, probe failure) for profile-svc pods in the window."
+      },
+      {
+        "statement": "Memory and CPU are not ruled out as factors, because the queries returned no data rather than normal values.",
+        "basis": "The metrics calls for memory_usage and cpu_usage returned empty evidence arrays with no error status.",
+        "how_to_verify": "Check the metrics backend for profile-svc container memory and CPU series, and confirm the metric names exist in the backend."
+      },
+      {
+        "statement": "The restart count differs between sources: the kubelet log says restart count 3 at 09:13:30Z, but pod_restarts is 7.0 at 09:15:00Z. The metric may count pods, or restarts may have occurred between those times.",
+        "basis": "log:inc03:0007 and metric:inc03:restarts:0001 are not directly comparable.",
+        "how_to_verify": "Get per-pod restart counts over time from the metric backend and kubelet events."
+      },
+      {
+        "statement": "The 5xx rate and latency series were not returned by name. The error_rate_pct metric is used as a proxy for the 5xx rate.",
+        "basis": "The unfiltered metrics query returned only error_rate_pct and pod_restarts. No http_5xx or latency samples appeared.",
+        "how_to_verify": "Query http_5xx_rate and request latency p95/p99 for profile-svc and avatar-store in the window."
+      },
+      {
+        "statement": "The ERROR and WARN log queries may be incomplete. The tool did not report partial results or omissions, but the sets are small and sparse for a 40% error rate.",
+        "basis": "Four ERROR lines and two WARN lines were returned for a window with a sustained 38% error rate, and 'omitted' was 0.",
+        "how_to_verify": "Re-run logs for profile-svc at INFO level, or filter by the 503 response path, and count lines against the error_rate metric."
+      },
+      {
+        "statement": "The memory_usage and cpu_usage metric queries returned no samples for the window.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The v1.8.0 deploy at 08:40Z is a candidate trigger, but it did not land shortly before 09:12Z (about 32 minutes earlier). The timing link to the pod restarts and 503s is unproven.",
+        "basis": "Deploy timestamp 08:40:00Z versus symptom onset about 09:12Z.",
+        "how_to_verify": "Check profile-svc error and restart metrics from 08:40Z onward for a step change, and check the v1.8.0 rollout progress and per-pod start times."
+      },
+      {
+        "statement": "No feature-flag flips, scaling events, or infra changes for profile-svc, avatar-store, or user-db were checked. The deploys tool may only cover deployments and config changes.",
+        "basis": "Only deploys queries were run. No feature-flag, scaling, or infra query was made.",
+        "how_to_verify": "Query the flag service, autoscaler and infra change log for profile-svc, avatar-store and user-db over 08:30-09:50Z."
+      },
+      {
+        "statement": "Changes in services other than profile-svc, avatar-store and user-db are unknown because the all-services deploys query timed out.",
+        "basis": "gap:1 from the timed-out deploys call with service=null.",
+        "how_to_verify": "Retry the all-services deploys query with a narrower window or per-service calls for web-frontend and any other upstream or infra services."
+      },
+      {
+        "statement": "The dependency result has an ID gap (0003 is missing from the sequence), which could mean an omitted edge.",
+        "basis": "Dependency evidence IDs are 0001, 0002 and 0004. The result reports omitted=0.",
+        "how_to_verify": "Re-run the dependencies query with direction=both or check the service graph directly for any additional edges."
+      },
+      {
+        "statement": "The avatar-store and user-db deploy results are empty, which may mean no changes or incomplete data.",
+        "basis": "Both returned status ok with no evidence rows.",
+        "how_to_verify": "Confirm the deploy history for those services directly in the CD system for the last few hours."
+      },
+      {
+        "statement": "A deploys query for avatar-store in the window returned no deploys or config changes.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "A deploys query for user-db in the window returned no deploys or config changes.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The unfiltered all-services deploys query for the window timed out after 3 attempts, so deploys across the whole platform are not confirmed.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "avatar-store is not the initiating cause. Profile errors began around 09:12Z, before the avatar-store success drop at 09:15Z, so avatar-store is more likely a contributing or coincident factor, or a downstream effect.",
+        "basis": "Timing of the 09:12Z onset (from the incident report) relative to the 09:15Z avatar-store sample, plus a passing health check.",
+        "how_to_verify": "Pull profile-svc and avatar-store logs at ERROR level for 09:00Z–09:20Z and compare first-error timestamps. Check whether profile-svc errors correlate with avatar-store call failures."
+      },
+      {
+        "statement": "The profile-svc restarts are more likely caused by a recent profile-svc deploy or config change than by a dependency failure.",
+        "basis": "Past incident inc with the same crashloop tag and a deploy tag, plus the restart symptom. This is pattern matching only, not confirmed for this incident.",
+        "how_to_verify": "Query deploys for profile-svc from about 08:30Z to 09:50Z and check for any release or config change near 09:12Z."
+      },
+      {
+        "statement": "user-db is healthy during the window, or at least not the cause.",
+        "basis": "Absence of a degradation signal is not evidence of health. The metrics query returned zero samples, which is more likely a missing metric name, a service-name mismatch, or a data gap than proof of health.",
+        "how_to_verify": "Re-query user-db metrics with name=null across a wider window, check the service name in the registry, and query user-db logs at WARN/ERROR for the window."
+      },
+      {
+        "statement": "The dependency list may be incomplete. Evidence IDs jump from dependency:inc03:0002 to 0004, so 0003 may be an edge that was not returned, and the result shows omitted: 0 but does not confirm completeness.",
+        "basis": "Gap in the sequential evidence IDs and the tool's gap-free reporting ('closes_gaps' is empty).",
+        "how_to_verify": "Re-query dependencies for profile-svc with direction=downstream and direction=upstream separately, and check for auth, cache, or other services that were not listed."
+      },
+      {
+        "statement": "avatar-store metric sampling is sparse (only 09:00Z and 09:15Z points returned for the window), so the true degradation period and magnitude are uncertain.",
+        "basis": "Only three avatar-store metric rows returned for a 80-minute window.",
+        "how_to_verify": "Query avatar-store request_success_pct and error logs at finer granularity across 08:30Z–09:50Z."
+      },
+      {
+        "statement": "The metrics query for user-db over the incident window returned no samples, so user-db health cannot be assessed from this data.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "avatar-store degradation began at or before 09:12:20Z, not at 09:15Z as t3 inferred.",
+        "basis": "log:inc03:0004 shows an avatar-store timeout at 09:12:20Z. The 09:15Z metric sample is only an upper bound because sampling is 15-minute.",
+        "how_to_verify": "Query avatar-store request_success_pct and latency at 1-minute resolution over 09:00Z-09:20Z."
+      },
+      {
+        "statement": "The v1.8.0 panic in render.AvatarThumbnail may be triggered by failed or timed-out avatar fetches, linking h1 and h2.",
+        "basis": "The panic at 09:12:41Z follows the first avatar timeout by about 21s and sits in the avatar thumbnail code path. Error rate was normal at 09:00Z despite v1.8.0 being live since 08:40Z.",
+        "how_to_verify": "Inspect the AvatarThumbnail stack trace and code for nil handling of error responses. Correlate panic timestamps with avatar-store timeouts per pod."
+      },
+      {
+        "statement": "The restarts are caused by liveness probe failures and/or panics, not OOM.",
+        "basis": "log:inc03:0006 shows probe failures and log:inc03:0005 shows a panic. Memory data is missing, so OOM is unconfirmed either way.",
+        "how_to_verify": "Pull kubelet events and container lastState.terminated reason and exit code for profile-svc pods in 09:10Z-09:50Z."
+      },
+      {
+        "statement": "No other platform change (for example network, DNS or infra affecting avatar-store) explains the avatar-store degradation.",
+        "basis": "The all-services deploys query timed out (gap:1), and no flag, scaling or infra queries were run.",
+        "how_to_verify": "Retry per-service deploy queries and check the infra and network change log and the flag service over 08:30Z-09:50Z."
+      },
+      {
+        "statement": "The avatar-store degradation was driven by the shard 2 volume failure (vol-data-2 going read-only with EIO), not by profile-svc v1.8.0 traffic.",
+        "basis": "The volume failure log at 09:11:48Z is about a minute before the profile-svc onset near 09:12Z, and the EIO errors match the drop to 61% success. No request-rate increase was observed.",
+        "how_to_verify": "Pull avatar-store request_rate broken down by caller for 08:30Z–09:30Z and check whether it rises after 08:40Z. Also pull volume or disk I/O error metrics for vol-data-2 and the storage/infra change log."
+      },
+      {
+        "statement": "The 08:40Z profile-svc v1.8.0 deploy did not change avatar-store traffic in a way that caused the failure.",
+        "basis": "The task gives the 08:40Z deploy time, but the avatar-store deploys query returned nothing, which is expected because that deploy is for profile-svc. No avatar-store request-rate data was returned to test the traffic hypothesis.",
+        "how_to_verify": "Query deploys for profile-svc v1.8.0 and confirm its time. Get avatar-store request_rate by caller across 08:40Z–09:15Z and check for an increase."
+      },
+      {
+        "statement": "The 1-minute resolution was not met. Only three metric samples came back (09:00Z and 09:15Z), with no baseline sample near 08:40Z.",
+        "basis": "The metrics query returned only three evidence rows for avatar-store over a one-hour window.",
+        "how_to_verify": "Re-query request_success_pct, request_rate and latency_p99 at 1m resolution for 08:30Z–09:30Z, or check the metrics backend for gaps or ingestion problems."
+      },
+      {
+        "statement": "The metrics for request_rate, latency_p99 and latency_p95 are missing and may be unavailable rather than zero.",
+        "basis": "Both named queries returned status ok with an empty evidence list and no timeout or error.",
+        "how_to_verify": "Check the metric names in the backend and retry the query. Also try the unnamed query with other metric names, such as p95 latency."
+      },
+      {
+        "statement": "The WARN-level logs and any caller-level traffic breakdown for avatar-store are not covered, because the log query returned only ERROR and INFO lines.",
+        "basis": "The logs query used level null and returned only three rows, none at WARN, so the WARN/ERROR coverage requested in the task is incomplete.",
+        "how_to_verify": "Re-query avatar-store logs with level WARN and level ERROR separately for 08:30Z–09:30Z."
+      },
+      {
+        "statement": "The metrics queries for request_rate and latency_p99 over 08:30Z–09:30Z returned no samples, so no traffic-volume or latency data is available for avatar-store in this window.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The deploys query for avatar-store over 08:30Z–09:30Z returned no deployments or config changes.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The v1.8.0 rollout reached the full fleet near 09:10Z.",
+        "basis": "Only the deploy start at 08:40Z is known, and the incident report's onset time of about 09:12Z. No rollout progress or per-pod start times were returned.",
+        "how_to_verify": "Query the rollout status and pod start times for profile-svc v1.8.0 between 08:40Z and 09:15Z (for example the Kubernetes deployment rollout history)."
+      },
+      {
+        "statement": "The 1-minute error rate and panic count series are not fully known. Only sparse samples at 09:00Z and 09:15Z were returned, and no panic-count metric was returned.",
+        "basis": "The metrics call had no resolution parameter and returned three samples total. The panic count was only observed through individual log lines.",
+        "how_to_verify": "Re-query error_rate_pct and a panic counter (or count of 'render.AvatarThumbnail' panic log lines) per minute from 08:35Z to 09:30Z."
+      },
+      {
+        "statement": "The panic in render.AvatarThumbnail is the cause of the pod restarts.",
+        "basis": "The panic log at 09:12:41Z reports v1.8.0 and the restarts started around the same time, but no kubelet event or lastState.terminated reason or exit code was retrieved to confirm the restart cause.",
+        "how_to_verify": "Retrieve kubelet events for profile-svc pods between 08:40Z and 09:30Z and check lastState.terminated reason and exit code (panic exit, liveness failure, or OOMKilled)."
+      },
+      {
+        "statement": "The avatar-store timeouts at 09:12:20Z preceded the panic at 09:12:41Z, so the timeouts may be a contributing factor or a separate issue rather than a consequence of the panic.",
+        "basis": "Log timestamps show the first timeout 21 seconds before the first panic. The log query started at 08:40Z and returned only ERROR-level lines, so earlier WARN or INFO activity is not visible.",
+        "how_to_verify": "Query WARN and INFO logs for profile-svc and avatar-store from 08:35Z to 09:15Z, and check avatar-store's own health and latency metrics over the same window."
+      },
+      {
+        "statement": "No outbound avatar-store call rate data is available for the before-deploy and after-deploy comparison.",
+        "basis": "The outbound_avatar_store_rate metric query returned an empty evidence list.",
+        "how_to_verify": "Confirm the metric name with the metrics catalogue, or query the profile-svc client-side outbound call counter to avatar-store, and compare rates before 08:40Z and after."
+      },
+      {
+        "statement": "The outbound_avatar_store_rate metric query returned no samples for 08:35Z to 09:30Z, so no before/after outbound call rate can be stated from this data.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "avatar-store degradation affected a caller other than profile-svc (feed-svc timeouts), which points toward an avatar-store-side fault rather than only profile-svc-driven load from v1.8.0.",
+        "basis": "feed-svc, which does not run v1.8.0 as far as the evidence shows, logged an avatar-store timeout at 09:17:20Z, after avatar-store success fell to 61% at 09:15Z.",
+        "how_to_verify": "Query feed-svc WARN and INFO logs and metrics for avatar-store call latency and error counts across 08:30–09:50Z, and check whether feed-svc's failures are continuous or sporadic."
+      },
+      {
+        "statement": "The feed-svc error sample is incomplete; the only ERROR line returned for feed-svc in the window may not represent the full extent of avatar-store timeouts.",
+        "basis": "The logs call was filtered to level ERROR and returned one line with omitted=0. Timeouts logged at WARN or as a fallback path may be excluded.",
+        "how_to_verify": "Re-query feed-svc logs for the window at WARN level and search for 'avatar-store' or 'thumbnail' messages."
+      },
+      {
+        "statement": "profile-svc's own avatar-store call errors and timeouts were not measured in this task.",
+        "basis": "No logs or metrics were queried for profile-svc. The 09:12Z profile-svc error onset is taken from the incident report only.",
+        "how_to_verify": "Query profile-svc logs for avatar-store call failures and timeouts from 08:30Z to 09:50Z and compare onset with avatar-store's 09:15Z drop."
+      },
+      {
+        "statement": "The metric sampling is too coarse to establish whether avatar-store degraded before profile-svc's 09:12Z onset.",
+        "basis": "Only three avatar-store samples were returned (09:00Z and 09:15Z), and the window of 08:30–09:50Z has no samples between them.",
+        "how_to_verify": "Re-query avatar-store request_success_pct and health_check_ok at 1-minute resolution across 08:30–09:50Z."
+      },
+      {
+        "statement": "Dependency edge dependency:inc03:0002 is absent from the upstream results, and the response reports omitted=0.",
+        "basis": "The evidence IDs returned are 0001 and 0003. The missing 0002 could be a dropped edge, a non-upstream edge, or an ID gap in the response.",
+        "how_to_verify": "Re-run dependencies for avatar-store with direction 'both' and check for any additional caller or non-caller edges."
+      },
+      {
+        "statement": "The absence of past avatar-store incidents may reflect keyword and tag mismatch rather than the absence of precedent.",
+        "basis": "past_incidents returned zero records for the exact keyword 'avatar-store' and tag 'avatar-store', which may not match how earlier incidents were titled or tagged.",
+        "how_to_verify": "Search past_incidents with broader keywords such as 'avatar', 'thumbnail', 'health check passed', 'client release overload', and 'profile 503'."
+      },
+      {
+        "statement": "Whether the avatar-store degradation has an independent cause (for example, an avatar-store deploy, config change, or its own overload) has not been checked.",
+        "basis": "The deploys tool was not called for avatar-store in this task.",
+        "how_to_verify": "Call deploys for avatar-store and for profile-svc over 08:30–09:50Z and compare change times with the 09:12Z profile-svc onset and the 09:15Z avatar-store drop."
+      },
+      {
+        "statement": "The past_incidents search for avatar-store keywords and tags returned no matching incidents.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The vol-data-2 read-only remount at 09:11:48Z was caused by an infra or storage fault, not by load from profile-svc v1.8.0.",
+        "basis": "log:inc03:0003 reports I/O errors and a read-only remount, which is a storage-layer symptom. Infra and storage change logs were not checked, and the all-services deploys query timed out (gap:1).",
+        "how_to_verify": "Check disk/volume I/O error metrics for vol-data-2, the storage or cloud provider events, and the infra change log for 08:30Z-09:50Z. Also pull avatar-store request_rate by caller across 08:30Z-09:15Z to rule out a load increase after 08:40Z."
+      },
+      {
+        "statement": "feed-svc does not run the v1.8.0 renderer and was affected independently of profile-svc.",
+        "basis": "log:inc03:0011 shows a feed-svc avatar-store timeout. deploy:inc03:0001 is a profile-svc deploy only. feed-svc deploys were not checked.",
+        "how_to_verify": "Query deploys for feed-svc over 08:30Z-09:50Z, and check feed-svc avatar-store error counts over time."
+      },
+      {
+        "statement": "The v1.8.0 panic is triggered by failed or timed-out avatar fetches (a nil avatar result), which adds panic restarts on top of the liveness-probe restarts.",
+        "basis": "The panic at 09:12:41Z follows the first avatar timeout at 09:12:20Z and sits in the AvatarThumbnail path. pod_restarts of 7 against the kubelet count of 3 suggests more than one restart mechanism or several pods.",
+        "how_to_verify": "Pull container lastState.terminated reasons and exit codes per pod for 09:10Z-09:50Z. Inspect the AvatarThumbnail nil-handling code. Correlate panic timestamps with avatar timeouts per pod."
+      },
+      {
+        "statement": "avatar-store degradation is confined to shard 2, which is consistent with about 61% success rather than a total outage.",
+        "basis": "log:inc03:0003 and log:inc03:0008 name shard 2 only, and health_check_ok stayed at 1.0.",
+        "how_to_verify": "Break down avatar-store errors by shard and check whether failing user IDs all map to shard 2."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Restore or fail over shard 2 (vol-data-2) on avatar-store, then confirm shard 2 reads succeed without EIO or hangs.",
+        "rationale": "h1 identifies the read-only remount after I/O errors as the origin of the failure chain. Restoring the shard addresses the root dependency, and profile-svc 503s and restarts should fall once avatar reads recover.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Check the node and storage layer for the cause of the I/O errors on vol-data-2 (kernel logs, disk or volume health, and recent infra or storage changes). Retry the deploys query separately, since gap:1 timed out and the infra and storage change check was never completed.",
+        "rationale": "h1 notes that the trigger for the I/O errors is still unknown and that infra and storage changes were not checked (gap:1). Establishing the trigger is needed to prevent recurrence and to confirm h1 over alternatives.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Make avatar-store's health check shard-aware so a shard that is read-only or failing I/O marks the instance unhealthy and removes it from rotation.",
+        "rationale": "h1 notes that /healthz returned 200 because the process was up, so avatar-store was never pulled from rotation. A shard-aware check would have removed the bad instance and limited the blast radius.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "In profile-svc, add a short timeout with an initials fallback for avatar fetches, plus a circuit breaker, so that avatar-store latency cannot hold the 64-handler pool.",
+        "rationale": "h1 identifies handler-pool exhaustion from 3000ms avatar-store timeouts as the mechanism that turned the dependency failure into user-visible 503s. Failing fast on avatars keeps the profile page available even while the dependency is down.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Decouple the profile-svc liveness probe from handler-pool saturation, so that a busy pool with a healthy process does not trigger restarts.",
+        "rationale": "h1 reports that liveness probes failed with 'waiting on avatar-store' and the kubelet restarted pods. Removing that coupling stops restart loops from worsening the outage during dependency failures.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Roll back profile-svc from v1.8.0 to the previous release, then verify that restart counts fall and check the crash logs for a nil dereference in render.AvatarThumbnail.",
+        "rationale": "h2 is low confidence as a root cause, but it may amplify the outage through panic-driven restarts. The restart count of 7 against a kubelet count of 3 suggests this is worth removing. Rollback will not restore avatars.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Pull kubelet termination reasons for profile-svc pods, plus memory, CPU and request-rate series for the window, to confirm or rule out OOM and traffic-surge causes.",
+        "rationale": "h3 has no direct evidence, and the memory, CPU and request-rate series are missing. Checking termination reasons is a quick way to settle it and to prevent it from being overlooked.",
+        "hypothesis_id": "h3"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:1",
+        "tool": "deploys",
+        "reason": "timeout after 3 attempts",
+        "service": null,
+        "affects_hypotheses": [
+          "h2"
+        ],
+        "task_id": "t2"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 27,
+      "llm_calls": 39,
+      "tokens_in": 108728,
+      "tokens_out": 32466,
+      "cache_tokens": 0,
+      "latency_s": 150.727
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_penalty",
+        "subject": "h2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "deploys gap in t2: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.15,
+        "confidence_after": 0.05
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "avatar-store",
+    "expected_category": "dependency_failure",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 81,
+    "grounded": 81,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 4,
+        "rationale": "The h1 claims are backed by the rows they cite. The read-only remount at 09:11:48Z (log:inc03:0003) comes about 30s before the first profile timeout (log:inc03:0004), EIO is shown in log:inc03:0008, the success drop in metric:inc03:avok:0001/0002, the green /healthz in log:inc03:0010 and metric:inc03:avhealth:0001, and feed-svc failing in log:inc03:0011 and dependency:inc03:0003. Some supporting lists are loose: h3 cites log:inc03:0006 as support even though that row attributes pool exhaustion to avatar-store, and the 7-vs-3 restart reasoning is speculative."
+      },
+      "fact_assumption_separation": {
+        "score": 3,
+        "rationale": "The facts are accurate observations, though heavily duplicated. The assumptions list carries stale items that contradict the final conclusion and the evidence: 'avatar-store is not the initiating cause', 'restarts more likely caused by a deploy', 'no logs or metrics were queried for profile-svc', and 'dependency 0003 is missing' even though dependency:inc03:0003 is cited. Several items are labelled 'stated as a fact but cites no evidence'. Inferences do carry a basis and verification steps, but the overall separation is noisy."
+      },
+      "recommended_actions": {
+        "score": 4,
+        "rationale": "The actions are well targeted. Restoring or failing over shard 2 / vol-data-2, investigating the storage-layer I/O cause, making the health check shard-aware, adding a fast timeout with a circuit breaker and initials fallback in profile-svc, and decoupling liveness from pool saturation are what a good on-call engineer would do. The profile-svc rollback is clearly marked secondary and non-restorative. It is low risk but probably unnecessary, since the panic likely follows from the avatar failures."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The top hypothesis names avatar-store and explicitly rejects the v1.8.0 story. It notes errors were normal at 09:00Z (metric:inc03:err:0001), the panic in log:inc03:0005 came after the timeouts, and feed-svc was also affected (log:inc03:0011). It treats the restarts in log:inc03:0007 as a consequence of blocking on avatar-store, and shows that the green health check (metric:inc03:avhealth:0001) masks the 61% success rate."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 17147,
+      "tokens_out": 1479,
+      "cache_tokens": 0
+    },
+    "latency_s": 13.76,
+    "judged_at": "2026-11-13T07:27:06.602836Z"
+  }
+}

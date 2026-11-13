@@ -1,0 +1,21 @@
+{
+  "incident_id": "inc08",
+  "expected_outcome": "root_cause",
+  "service": "recs-svc",
+  "category": "feature_flag",
+  "key_evidence_ids": ["config:inc08:0001", "log:inc08:0003", "log:inc08:0004", "metric:inc08:eu:0002", "metric:inc08:us:0001"],
+  "traps": [
+    {
+      "description": "eu-west-1 packet loss at the edge and a past incident about an EU network partition fit the regional pattern; but the loss lasted 3 minutes and recovered while EU errors continue, and the errors are a missing feature in ranker_v2, not dropped connections",
+      "misleading_evidence_ids": ["log:inc08:0006", "metric:inc08:loss:0001", "past:inc08:0001"]
+    },
+    {
+      "description": "recs-svc v6.0.0 shipped ranker_v2 the same day and a past incident blames a ranker release; but it shipped to every region with the flag off, ran cleanly for 2.5 hours, and us-east-1 and ap-south-1 stay healthy",
+      "misleading_evidence_ids": ["deploy:inc08:0001", "past:inc08:0002"]
+    },
+    {
+      "description": "A cache size change 20 minutes earlier looks like a config change cause; it was applied to all regions and only eu-west-1 fails",
+      "misleading_evidence_ids": ["config:inc08:0002", "log:inc08:0002"]
+    }
+  ]
+}

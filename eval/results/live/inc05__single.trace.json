@@ -1,0 +1,525 @@
+{
+  "incident_id": "inc05",
+  "incident": {
+    "title": "Mobile app balance screen failing",
+    "symptoms": [
+      "mobile-bff returns HTTP 502 for GET /v2/balance since 00:00 UTC",
+      "Nightly settlement batch reported failures shortly after midnight",
+      "Login and browsing in the mobile app still work"
+    ],
+    "affected_service": "mobile-bff",
+    "window_start": "2026-11-13T23:00:00Z",
+    "window_end": "2026-11-14T00:45:00Z",
+    "severity": "SEV1"
+  },
+  "started_at": "2026-11-13T06:55:32.338185Z",
+  "tasks": [],
+  "findings": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "facts": [
+        {
+          "statement": "mobile-bff calls ledger-api and accounts-api. ledger-api is also called by batch-settlement.",
+          "evidence_ids": [
+            "dependency:inc05:0001",
+            "dependency:inc05:0002",
+            "dependency:inc05:0003"
+          ]
+        },
+        {
+          "statement": "From 00:00:04Z, mobile-bff GET /v2/balance returns 502 because calls to ledger-api fail with x509 'certificate has expired or is not yet valid'. The first error says the current time 2026-11-14T00:00:04Z is after 2026-11-14T00:00:00Z.",
+          "evidence_ids": [
+            "log:inc05:0005",
+            "log:inc05:0008"
+          ]
+        },
+        {
+          "statement": "batch-settlement, a separate client, failed calling https://ledger-api.internal/v1/settle with 'certificate verify failed: certificate has expired' at 00:01:12Z. Settlement run 20261114 was aborted at 00:10:20Z.",
+          "evidence_ids": [
+            "log:inc05:0007",
+            "log:inc05:0012"
+          ]
+        },
+        {
+          "statement": "ledger-api logged only 12 requests in the 5 minutes to 00:05Z (normal is about 4,000) and no application errors.",
+          "evidence_ids": [
+            "log:inc05:0010"
+          ]
+        },
+        {
+          "statement": "mobile-bff v7.1.0, which upgrades the HTTP client to netkit 3.0, was deployed at 22:10Z and started at 22:12:40Z. The config http.tls_min_version was changed from 1.2 to 1.3 at 23:30Z and applied at 23:31:02Z.",
+          "evidence_ids": [
+            "deploy:inc05:0001",
+            "log:inc05:0001",
+            "config:inc05:0001",
+            "log:inc05:0002"
+          ]
+        },
+        {
+          "statement": "After both the deploy and the TLS config change, mobile-bff GET /v2/balance still succeeded (200) at 23:45:10Z and 23:58:30Z.",
+          "evidence_ids": [
+            "log:inc05:0003",
+            "log:inc05:0004"
+          ]
+        },
+        {
+          "statement": "The deploy/config query for the window returned no ledger-api deploy or config change. The first attempt hit a backend error, which the retry resolved.",
+          "evidence_ids": [
+            "deploy:inc05:0001",
+            "config:inc05:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The TLS certificate served by ledger-api (ledger-api.internal) had a notAfter of 2026-11-14T00:00:00Z and was not renewed.",
+          "basis": "The x509 error text shows the expiry boundary at 00:00:00Z, and two independent clients fail the same way at the same moment.",
+          "how_to_verify": "Inspect the served cert (openssl s_client -connect ledger-api.internal:443) and check the cert-manager/renewal job logs."
+        },
+        {
+          "statement": "accounts-api is healthy. This is consistent with login and browsing still working, but it was not queried directly.",
+          "basis": "The incident report symptoms, plus errors referencing only ledger-api.",
+          "how_to_verify": "Query accounts-api logs and metrics for the window."
+        },
+        {
+          "statement": "No past incidents matched, so there is no known renewal runbook.",
+          "basis": "past_incidents returned empty.",
+          "how_to_verify": "Search with broader keywords such as 'cert rotation' or 'tls'."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "dependency:inc05:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "mobile-bff",
+        "depends_on": "ledger-api"
+      }
+    },
+    {
+      "id": "dependency:inc05:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "mobile-bff",
+        "depends_on": "accounts-api"
+      }
+    },
+    {
+      "id": "log:inc05:0005",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:00:04Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "ERROR",
+        "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid: current time 2026-11-14T00:00:04Z is after 2026-11-14T00:00:00Z"
+      }
+    },
+    {
+      "id": "log:inc05:0008",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:02:45Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "ERROR",
+        "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid"
+      }
+    },
+    {
+      "id": "log:inc05:0010",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:05:00Z",
+      "payload": {
+        "service": "ledger-api",
+        "level": "INFO",
+        "message": "Requests in last 5m: 12 (normal ~4,000); no application errors"
+      }
+    },
+    {
+      "id": "deploy:inc05:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-13T22:10:00Z",
+      "payload": {
+        "service": "mobile-bff",
+        "version": "v7.1.0",
+        "description": "Upgrade HTTP client library to netkit 3.0"
+      }
+    },
+    {
+      "id": "config:inc05:0001",
+      "kind": "config",
+      "timestamp": "2026-11-13T23:30:00Z",
+      "payload": {
+        "service": "mobile-bff",
+        "key": "http.tls_min_version",
+        "old_value": "1.2",
+        "new_value": "1.3"
+      }
+    },
+    {
+      "id": "dependency:inc05:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "mobile-bff",
+        "depends_on": "ledger-api"
+      }
+    },
+    {
+      "id": "dependency:inc05:0003",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "batch-settlement",
+        "depends_on": "ledger-api"
+      }
+    },
+    {
+      "id": "log:inc05:0007",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:01:12Z",
+      "payload": {
+        "service": "batch-settlement",
+        "level": "ERROR",
+        "message": "POST https://ledger-api.internal/v1/settle failed: certificate verify failed: certificate has expired"
+      }
+    },
+    {
+      "id": "log:inc05:0012",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:10:20Z",
+      "payload": {
+        "service": "batch-settlement",
+        "level": "ERROR",
+        "message": "Settlement run 20261114 aborted after 3 failed calls to ledger-api"
+      }
+    },
+    {
+      "id": "log:inc05:0001",
+      "kind": "log",
+      "timestamp": "2026-11-13T22:12:40Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "Starting mobile-bff v7.1.0 (http client: netkit 3.0)"
+      }
+    },
+    {
+      "id": "log:inc05:0002",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:31:02Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "Applied setting http.tls_min_version=1.3"
+      }
+    },
+    {
+      "id": "log:inc05:0003",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:45:10Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "GET /v2/balance 200 in 95ms"
+      }
+    },
+    {
+      "id": "log:inc05:0004",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:58:30Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "GET /v2/balance 200 in 101ms"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "service": "ledger-api",
+      "category": "cert_dns",
+      "summary": "ledger-api's TLS server certificate expired at 2026-11-14T00:00:00Z. Every TLS client fails handshake verification, giving mobile-bff 502s on /v2/balance and batch-settlement aborts, while ledger-api sees almost no traffic and no app errors. Fix: renew or rotate the cert.",
+      "supporting_ids": [
+        "log:inc05:0005",
+        "log:inc05:0008",
+        "log:inc05:0007",
+        "log:inc05:0012",
+        "log:inc05:0010",
+        "log:inc05:0003",
+        "log:inc05:0004",
+        "dependency:inc05:0003"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.9,
+      "final_confidence": null
+    },
+    {
+      "id": "H2",
+      "service": "mobile-bff",
+      "category": "config_change",
+      "summary": "The http.tls_min_version change to 1.3 broke the TLS handshake from mobile-bff to ledger-api.",
+      "supporting_ids": [
+        "config:inc05:0001",
+        "log:inc05:0002"
+      ],
+      "contradicting_ids": [
+        "log:inc05:0003",
+        "log:inc05:0004",
+        "log:inc05:0007",
+        "log:inc05:0005"
+      ],
+      "proposed_confidence": 0.04,
+      "final_confidence": null
+    },
+    {
+      "id": "H3",
+      "service": "mobile-bff",
+      "category": "bad_deploy",
+      "summary": "The netkit 3.0 client upgrade in v7.1.0 mishandles certificate validation, for example clock or chain handling, causing the x509 errors.",
+      "supporting_ids": [
+        "deploy:inc05:0001",
+        "log:inc05:0001"
+      ],
+      "contradicting_ids": [
+        "log:inc05:0003",
+        "log:inc05:0004",
+        "log:inc05:0007"
+      ],
+      "proposed_confidence": 0.03,
+      "final_confidence": null
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "deploys",
+      "reason": "tool backend error",
+      "service": null,
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 9,
+    "llm_calls": 11,
+    "tokens_in": 26639,
+    "tokens_out": 4383,
+    "cache_tokens": 0,
+    "llm_latency_s": 57.846
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T06:55:32.338245Z",
+      "ended_at": "2026-11-13T06:56:15.604331Z",
+      "status": "done",
+      "tool_calls": 9,
+      "llm_calls": 10
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc05",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "ledger-api",
+        "category": "cert_dns",
+        "summary": "ledger-api's TLS server certificate expired at 2026-11-14T00:00:00Z. Every TLS client fails handshake verification, giving mobile-bff 502s on /v2/balance and batch-settlement aborts, while ledger-api sees almost no traffic and no app errors. Fix: renew or rotate the cert.",
+        "supporting_ids": [
+          "log:inc05:0005",
+          "log:inc05:0008",
+          "log:inc05:0007",
+          "log:inc05:0012",
+          "log:inc05:0010",
+          "log:inc05:0003",
+          "log:inc05:0004",
+          "dependency:inc05:0003"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.9,
+        "final_confidence": 0.9
+      },
+      {
+        "id": "H2",
+        "service": "mobile-bff",
+        "category": "config_change",
+        "summary": "The http.tls_min_version change to 1.3 broke the TLS handshake from mobile-bff to ledger-api.",
+        "supporting_ids": [
+          "config:inc05:0001",
+          "log:inc05:0002"
+        ],
+        "contradicting_ids": [
+          "log:inc05:0003",
+          "log:inc05:0004",
+          "log:inc05:0007",
+          "log:inc05:0005"
+        ],
+        "proposed_confidence": 0.04,
+        "final_confidence": 0.04
+      },
+      {
+        "id": "H3",
+        "service": "mobile-bff",
+        "category": "bad_deploy",
+        "summary": "The netkit 3.0 client upgrade in v7.1.0 mishandles certificate validation, for example clock or chain handling, causing the x509 errors.",
+        "supporting_ids": [
+          "deploy:inc05:0001",
+          "log:inc05:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc05:0003",
+          "log:inc05:0004",
+          "log:inc05:0007"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "mobile-bff calls ledger-api and accounts-api. ledger-api is also called by batch-settlement.",
+        "evidence_ids": [
+          "dependency:inc05:0001",
+          "dependency:inc05:0002",
+          "dependency:inc05:0003"
+        ]
+      },
+      {
+        "statement": "From 00:00:04Z, mobile-bff GET /v2/balance returns 502 because calls to ledger-api fail with x509 'certificate has expired or is not yet valid'. The first error says the current time 2026-11-14T00:00:04Z is after 2026-11-14T00:00:00Z.",
+        "evidence_ids": [
+          "log:inc05:0005",
+          "log:inc05:0008"
+        ]
+      },
+      {
+        "statement": "batch-settlement, a separate client, failed calling https://ledger-api.internal/v1/settle with 'certificate verify failed: certificate has expired' at 00:01:12Z. Settlement run 20261114 was aborted at 00:10:20Z.",
+        "evidence_ids": [
+          "log:inc05:0007",
+          "log:inc05:0012"
+        ]
+      },
+      {
+        "statement": "ledger-api logged only 12 requests in the 5 minutes to 00:05Z (normal is about 4,000) and no application errors.",
+        "evidence_ids": [
+          "log:inc05:0010"
+        ]
+      },
+      {
+        "statement": "mobile-bff v7.1.0, which upgrades the HTTP client to netkit 3.0, was deployed at 22:10Z and started at 22:12:40Z. The config http.tls_min_version was changed from 1.2 to 1.3 at 23:30Z and applied at 23:31:02Z.",
+        "evidence_ids": [
+          "deploy:inc05:0001",
+          "log:inc05:0001",
+          "config:inc05:0001",
+          "log:inc05:0002"
+        ]
+      },
+      {
+        "statement": "After both the deploy and the TLS config change, mobile-bff GET /v2/balance still succeeded (200) at 23:45:10Z and 23:58:30Z.",
+        "evidence_ids": [
+          "log:inc05:0003",
+          "log:inc05:0004"
+        ]
+      },
+      {
+        "statement": "The deploy/config query for the window returned no ledger-api deploy or config change. The first attempt hit a backend error, which the retry resolved.",
+        "evidence_ids": [
+          "deploy:inc05:0001",
+          "config:inc05:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The TLS certificate served by ledger-api (ledger-api.internal) had a notAfter of 2026-11-14T00:00:00Z and was not renewed.",
+        "basis": "The x509 error text shows the expiry boundary at 00:00:00Z, and two independent clients fail the same way at the same moment.",
+        "how_to_verify": "Inspect the served cert (openssl s_client -connect ledger-api.internal:443) and check the cert-manager/renewal job logs."
+      },
+      {
+        "statement": "accounts-api is healthy. This is consistent with login and browsing still working, but it was not queried directly.",
+        "basis": "The incident report symptoms, plus errors referencing only ledger-api.",
+        "how_to_verify": "Query accounts-api logs and metrics for the window."
+      },
+      {
+        "statement": "No past incidents matched, so there is no known renewal runbook.",
+        "basis": "past_incidents returned empty.",
+        "how_to_verify": "Search with broader keywords such as 'cert rotation' or 'tls'."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Confirm the ledger-api certificate expiry from a client host before changing anything. Run `openssl s_client -connect <ledger-api-host>:443 -servername <ledger-api-host> | openssl x509 -noout -dates -subject -issuer` and check that notAfter is 2026-11-14T00:00:00Z.",
+        "rationale": "This verifies the leading hypothesis's core claim in one step and guards against rotating the wrong certificate or endpoint, for example a different SAN, load-balancer listener, or ingress.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Renew or rotate ledger-api's TLS server certificate on the endpoint mobile-bff and batch-settlement actually connect to, such as the load balancer, ingress or service listener. Include the full intermediate chain, then reload or restart the TLS terminators so the new cert is served.",
+        "rationale": "An expired server cert makes every verifying client fail the handshake. That fits both the mobile-bff 502s on /v2/balance and the settlement batch aborts starting at 00:00 UTC, while logins and browsing (which don't call ledger-api) keep working.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "After rotation, verify recovery: rerun the openssl check and confirm the new notAfter and a clean chain verification. Then confirm the x509 errors stop in mobile-bff logs and the GET /v2/balance 502 rate returns to baseline, and that ledger-api request volume returns to normal.",
+        "rationale": "This confirms the fix worked end to end and closes the SEV1 based on observed symptom resolution rather than on the change alone.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Once ledger-api handshakes succeed, re-run or resume the failed nightly settlement batch. Reconcile it for partial or duplicate settlement records from the aborted midnight run before marking it complete.",
+        "rationale": "The batch failed shortly after midnight because of the same handshake failure. Settlement data may be incomplete or inconsistent and needs a controlled re-run.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Audit other certificates issued alongside ledger-api's, or with nearby expiry dates, across internal services. Add or repair alerting on cert expiry, for example at 30, 14 and 7 days before notAfter.",
+        "rationale": "This prevents the same failure on other dependencies and closes the monitoring gap that let the expiry hit production unnoticed.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Do not roll back the http.tls_min_version=1.3 change pre-emptively. Only if x509 or handshake errors persist after cert rotation, revert mobile-bff's http.tls_min_version to its prior value as a secondary step.",
+        "rationale": "Several logs contradict this hypothesis and the errors are consistent with cert expiry, not protocol negotiation. A rollback now adds change risk with little expected benefit. Keep it as a contingency.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Hold the v7.1.0 (netkit 3.0) rollback as a contingency. Consider it only if batch-settlement recovers after cert rotation but mobile-bff still shows x509 validation errors against the valid new cert.",
+        "rationale": "batch-settlement doesn't run netkit 3.0 yet failed the same way at the same moment, which points to a shared server-side cause. Rolling back the client is unlikely to help and should depend on post-rotation evidence.",
+        "hypothesis_id": "H3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 9,
+      "llm_calls": 11,
+      "tokens_in": 26639,
+      "tokens_out": 4383,
+      "cache_tokens": 0,
+      "latency_s": 57.853
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "deploys gap in baseline: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  }
+}

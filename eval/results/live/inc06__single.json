@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc06",
+  "system": "single",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T06:59:57.958563Z",
+  "report": {
+    "incident_id": "inc06",
+    "outcome": "INCONCLUSIVE",
+    "ranked_hypotheses": [],
+    "facts": [],
+    "assumptions": [],
+    "recommended_actions": [],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 5,
+      "llm_calls": 7,
+      "tokens_in": 20053,
+      "tokens_out": 4581,
+      "cache_tokens": 0,
+      "latency_s": 43.765
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in baseline: partial result: 4 of 6 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": [
+      {
+        "agent": "baseline",
+        "task_id": "baseline",
+        "reason": "ActionParseError: finish.assumptions.1.badge_note_removed: Extra inputs are not permitted (reply began: '{\"action\": \"finish\", \"facts\": [{\"statement\": \"Migration 0142 on inventory-db was deployed at 10:14 UTC. It rebuilt the stock_levels table and dropped idx_stock_sku_warehouse, which it describes as sup...')",
+        "attempts": 2
+      }
+    ]
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "inventory-db",
+    "expected_category": "db_migration",
+    "correct": false,
+    "accuracy_reason": "outcome_mismatch",
+    "citations": 0,
+    "grounded": 0,
+    "grounding": null,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 1,
+        "rationale": "The report has no facts, hypotheses or valid citations. The only 'ID' it references is a gap descriptor, not an evidence row. The baseline agent's useful findings about migration 0142 were lost to a parse error and never made it into the report."
+      },
+      "fact_assumption_separation": {
+        "score": 1,
+        "rationale": "Both the facts and assumptions lists are empty, so there is nothing to separate or evaluate."
+      },
+      "recommended_actions": {
+        "score": 1,
+        "rationale": "No actions are recommended. The evidence points to a migration that dropped an index on inventory-db (deploy:inc06:0001), so restoring the index or rolling back would have been the obvious step, and the report omits it."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "There is no top hypothesis or conclusion, so the report could not have relied on the flash-sale, cache or partial-metrics traps. The truncated baseline reply even suggests it was heading toward the migration."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 1673,
+      "tokens_out": 341,
+      "cache_tokens": 0
+    },
+    "latency_s": 3.887,
+    "judged_at": "2026-11-13T07:28:17.779282Z"
+  }
+}

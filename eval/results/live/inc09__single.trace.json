@@ -1,0 +1,481 @@
+{
+  "incident_id": "inc09",
+  "incident": {
+    "title": "Push notifications delayed overnight",
+    "symptoms": [
+      "Push notifications arrived 20 to 45 minutes late between about 02:15 and 03:00 UTC",
+      "Delivery returned to normal on its own around 03:00 UTC",
+      "No customer-facing errors were reported"
+    ],
+    "affected_service": "notification-svc",
+    "window_start": "2026-11-18T02:00:00Z",
+    "window_end": "2026-11-18T03:30:00Z",
+    "severity": "SEV3"
+  },
+  "started_at": "2026-11-13T07:12:49.310255Z",
+  "tasks": [],
+  "findings": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "facts": [
+        {
+          "statement": "At 02:05:12Z, before the incident, notification-svc delivered 3,210 pushes in 60s with consumer lag 0.4s.",
+          "evidence_ids": [
+            "log:inc09:0001"
+          ]
+        },
+        {
+          "statement": "notification-svc v3.3.0 was deployed at 02:10:00Z. Its description reads 'Template rendering refactor; bump queue client library'. The service logged starting v3.3.0 at 02:11:30Z.",
+          "evidence_ids": [
+            "deploy:inc09:0001",
+            "log:inc09:0002"
+          ]
+        },
+        {
+          "statement": "At 02:12:00Z queue-broker config consumer.max_inflight was changed from 500 to 200.",
+          "evidence_ids": [
+            "config:inc09:0001"
+          ]
+        },
+        {
+          "statement": "At 02:13:05Z notification-svc warned 'Consumer lag rising: 38s'.",
+          "evidence_ids": [
+            "log:inc09:0003"
+          ]
+        },
+        {
+          "statement": "At 02:59:10Z notification-svc logged 'Consumer group rebalanced (3 members), lag 1,940s and falling'. By 03:06:00Z it delivered 9,880 pushes in 60s with lag 2s.",
+          "evidence_ids": [
+            "log:inc09:0007",
+            "log:inc09:0008"
+          ]
+        },
+        {
+          "statement": "notification-svc CPU was 11% at 02:30Z.",
+          "evidence_ids": [
+            "metric:inc09:cpu:0001"
+          ]
+        },
+        {
+          "statement": "The deploys query for 01:00Z to 03:30Z returned only the v3.3.0 deploy and the max_inflight change. It showed no rollback or config revert before recovery.",
+          "evidence_ids": [
+            "deploy:inc09:0001",
+            "config:inc09:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "queue-broker metrics are unavailable, so its broker-side health, partition assignment and throughput during the window are unknown.",
+          "basis": "queue-broker metrics timed out (gap:2). queue-broker logs returned no rows.",
+          "how_to_verify": "Re-query queue-broker metrics, especially per-partition lag, consumer assignment and inflight counts."
+        },
+        {
+          "statement": "Before the 02:59 rebalance, some partitions were likely unassigned or stuck on one consumer. The rebalance then restored full consumption.",
+          "basis": "Lag recovered right after the rebalance while max_inflight was still 200. Post-recovery throughput of 9,880 per 60s is far above the pre-incident 3,210, which fits draining a backlog.",
+          "how_to_verify": "Check consumer group membership and partition assignment history from 02:11 to 02:59. Check the queue client library changelog for rebalance or assignment changes."
+        },
+        {
+          "statement": "notification-svc ERROR logs are empty and the INFO logs may be incomplete. The earlier partial result omitted rows.",
+          "basis": "gap:1 was partially closed by the WARN query. The ERROR query returned nothing.",
+          "how_to_verify": "Re-pull the full DEBUG/INFO logs for 02:11 to 02:59."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "log:inc09:0001",
+      "kind": "log",
+      "timestamp": "2026-11-18T02:05:12Z",
+      "payload": {
+        "service": "notification-svc",
+        "level": "INFO",
+        "message": "Delivered 3,210 pushes in last 60s, consumer lag 0.4s"
+      }
+    },
+    {
+      "id": "log:inc09:0002",
+      "kind": "log",
+      "timestamp": "2026-11-18T02:11:30Z",
+      "payload": {
+        "service": "notification-svc",
+        "level": "INFO",
+        "message": "Starting notification-svc v3.3.0"
+      }
+    },
+    {
+      "id": "deploy:inc09:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-18T02:10:00Z",
+      "payload": {
+        "service": "notification-svc",
+        "version": "v3.3.0",
+        "description": "Template rendering refactor; bump queue client library"
+      }
+    },
+    {
+      "id": "config:inc09:0001",
+      "kind": "config",
+      "timestamp": "2026-11-18T02:12:00Z",
+      "payload": {
+        "service": "queue-broker",
+        "key": "consumer.max_inflight",
+        "old_value": "500",
+        "new_value": "200"
+      }
+    },
+    {
+      "id": "metric:inc09:cpu:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-18T02:30:00Z",
+      "payload": {
+        "service": "notification-svc",
+        "name": "cpu_pct",
+        "value": 11.0
+      }
+    },
+    {
+      "id": "log:inc09:0003",
+      "kind": "log",
+      "timestamp": "2026-11-18T02:13:05Z",
+      "payload": {
+        "service": "notification-svc",
+        "level": "WARN",
+        "message": "Consumer lag rising: 38s"
+      }
+    },
+    {
+      "id": "log:inc09:0007",
+      "kind": "log",
+      "timestamp": "2026-11-18T02:59:10Z",
+      "payload": {
+        "service": "notification-svc",
+        "level": "INFO",
+        "message": "Consumer group rebalanced (3 members), lag 1,940s and falling"
+      }
+    },
+    {
+      "id": "log:inc09:0008",
+      "kind": "log",
+      "timestamp": "2026-11-18T03:06:00Z",
+      "payload": {
+        "service": "notification-svc",
+        "level": "INFO",
+        "message": "Delivered 9,880 pushes in last 60s, consumer lag 2s"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "service": "notification-svc",
+      "category": "bad_deploy",
+      "summary": "The v3.3.0 deploy bumped the queue client library. The new client probably mishandled consumer group membership or partition assignment after the restart, leaving partitions under-consumed until a rebalance at 02:59 fixed it without intervention. Lag started rising within about 90s of the new version starting.",
+      "supporting_ids": [
+        "deploy:inc09:0001",
+        "log:inc09:0002",
+        "log:inc09:0003",
+        "log:inc09:0007",
+        "log:inc09:0008",
+        "metric:inc09:cpu:0001"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.5,
+      "final_confidence": null
+    },
+    {
+      "id": "H2",
+      "service": "queue-broker",
+      "category": "config_change",
+      "summary": "Lowering consumer.max_inflight from 500 to 200 at 02:12 throttled delivery to notification-svc consumers, so lag built up. Recovery at 03:00 with the setting apparently unchanged and much higher throughput weakens this.",
+      "supporting_ids": [
+        "config:inc09:0001",
+        "log:inc09:0003"
+      ],
+      "contradicting_ids": [
+        "log:inc09:0007",
+        "log:inc09:0008"
+      ],
+      "proposed_confidence": 0.3,
+      "final_confidence": null
+    },
+    {
+      "id": "H3",
+      "service": "notification-svc",
+      "category": "capacity",
+      "summary": "notification-svc lacked consumer capacity to keep up with overnight volume. CPU at 11% and the large post-recovery throughput argue against this.",
+      "supporting_ids": [
+        "log:inc09:0003"
+      ],
+      "contradicting_ids": [
+        "metric:inc09:cpu:0001",
+        "log:inc09:0008"
+      ],
+      "proposed_confidence": 0.08,
+      "final_confidence": null
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "logs",
+      "reason": "partial result: 3 of 5 rows missing",
+      "service": "notification-svc",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    },
+    {
+      "id": "gap:2",
+      "tool": "metrics",
+      "reason": "timeout after 3 attempts",
+      "service": "queue-broker",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 9,
+    "llm_calls": 11,
+    "tokens_in": 26299,
+    "tokens_out": 4432,
+    "cache_tokens": 0,
+    "llm_latency_s": 47.792
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T07:12:49.310283Z",
+      "ended_at": "2026-11-13T07:13:26.605767Z",
+      "status": "done",
+      "tool_calls": 9,
+      "llm_calls": 10
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc09",
+    "outcome": "INCONCLUSIVE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "notification-svc",
+        "category": "bad_deploy",
+        "summary": "The v3.3.0 deploy bumped the queue client library. The new client probably mishandled consumer group membership or partition assignment after the restart, leaving partitions under-consumed until a rebalance at 02:59 fixed it without intervention. Lag started rising within about 90s of the new version starting.",
+        "supporting_ids": [
+          "deploy:inc09:0001",
+          "log:inc09:0002",
+          "log:inc09:0003",
+          "log:inc09:0007",
+          "log:inc09:0008",
+          "metric:inc09:cpu:0001"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.5,
+        "final_confidence": 0.4
+      },
+      {
+        "id": "H2",
+        "service": "queue-broker",
+        "category": "config_change",
+        "summary": "Lowering consumer.max_inflight from 500 to 200 at 02:12 throttled delivery to notification-svc consumers, so lag built up. Recovery at 03:00 with the setting apparently unchanged and much higher throughput weakens this.",
+        "supporting_ids": [
+          "config:inc09:0001",
+          "log:inc09:0003"
+        ],
+        "contradicting_ids": [
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ],
+        "proposed_confidence": 0.3,
+        "final_confidence": 0.2
+      },
+      {
+        "id": "H3",
+        "service": "notification-svc",
+        "category": "capacity",
+        "summary": "notification-svc lacked consumer capacity to keep up with overnight volume. CPU at 11% and the large post-recovery throughput argue against this.",
+        "supporting_ids": [
+          "log:inc09:0003"
+        ],
+        "contradicting_ids": [
+          "metric:inc09:cpu:0001",
+          "log:inc09:0008"
+        ],
+        "proposed_confidence": 0.08,
+        "final_confidence": 0.0
+      }
+    ],
+    "facts": [
+      {
+        "statement": "At 02:05:12Z, before the incident, notification-svc delivered 3,210 pushes in 60s with consumer lag 0.4s.",
+        "evidence_ids": [
+          "log:inc09:0001"
+        ]
+      },
+      {
+        "statement": "notification-svc v3.3.0 was deployed at 02:10:00Z. Its description reads 'Template rendering refactor; bump queue client library'. The service logged starting v3.3.0 at 02:11:30Z.",
+        "evidence_ids": [
+          "deploy:inc09:0001",
+          "log:inc09:0002"
+        ]
+      },
+      {
+        "statement": "At 02:12:00Z queue-broker config consumer.max_inflight was changed from 500 to 200.",
+        "evidence_ids": [
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "At 02:13:05Z notification-svc warned 'Consumer lag rising: 38s'.",
+        "evidence_ids": [
+          "log:inc09:0003"
+        ]
+      },
+      {
+        "statement": "At 02:59:10Z notification-svc logged 'Consumer group rebalanced (3 members), lag 1,940s and falling'. By 03:06:00Z it delivered 9,880 pushes in 60s with lag 2s.",
+        "evidence_ids": [
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ]
+      },
+      {
+        "statement": "notification-svc CPU was 11% at 02:30Z.",
+        "evidence_ids": [
+          "metric:inc09:cpu:0001"
+        ]
+      },
+      {
+        "statement": "The deploys query for 01:00Z to 03:30Z returned only the v3.3.0 deploy and the max_inflight change. It showed no rollback or config revert before recovery.",
+        "evidence_ids": [
+          "deploy:inc09:0001",
+          "config:inc09:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "queue-broker metrics are unavailable, so its broker-side health, partition assignment and throughput during the window are unknown.",
+        "basis": "queue-broker metrics timed out (gap:2). queue-broker logs returned no rows.",
+        "how_to_verify": "Re-query queue-broker metrics, especially per-partition lag, consumer assignment and inflight counts."
+      },
+      {
+        "statement": "Before the 02:59 rebalance, some partitions were likely unassigned or stuck on one consumer. The rebalance then restored full consumption.",
+        "basis": "Lag recovered right after the rebalance while max_inflight was still 200. Post-recovery throughput of 9,880 per 60s is far above the pre-incident 3,210, which fits draining a backlog.",
+        "how_to_verify": "Check consumer group membership and partition assignment history from 02:11 to 02:59. Check the queue client library changelog for rebalance or assignment changes."
+      },
+      {
+        "statement": "notification-svc ERROR logs are empty and the INFO logs may be incomplete. The earlier partial result omitted rows.",
+        "basis": "gap:1 was partially closed by the WARN query. The ERROR query returned nothing.",
+        "how_to_verify": "Re-pull the full DEBUG/INFO logs for 02:11 to 02:59."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Pull consumer group membership and partition assignment records for notification-svc from 02:10 to 03:05 UTC. Confirm whether some partitions had no active consumer, or a stale assignment, between the v3.3.0 restart and the 02:59 rebalance.",
+        "rationale": "H1 is the leading hypothesis but sits at only 0.4. Per-partition assignment data directly shows whether the new client left partitions under-consumed until the rebalance.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Review the release notes and changelog for the queue client library version bumped in v3.3.0, looking for changes to group join, rebalance, or partition assignment behavior. Try to reproduce it in staging with a rolling restart and track per-partition lag.",
+        "rationale": "This tests whether the library upgrade can plausibly cause the stuck-assignment pattern before any production change is made.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Pause further rollouts of the new queue client library to other consumers until H1 is verified. Prepare a rollback of notification-svc to the previous client version, or pin the prior library, to use if the assignment issue is confirmed or recurs on the next restart.",
+        "rationale": "Delivery recovered on its own, so an immediate rollback is not required. The risk could recur on any future restart, so containing the change and having a rollback ready limits exposure.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Add or verify per-partition consumer lag alerting for notification-svc, plus an alert on partitions with no assigned consumer, so this delay pattern triggers a page within minutes rather than going unnoticed overnight.",
+        "rationale": "A 20 to 45 minute delay went unremediated for about 45 minutes. Earlier detection lets someone force a rebalance if the H1 failure mode reappears.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Retry the queue-broker metrics query that timed out (gap:2), using a narrower time range if needed. Compare broker delivery throughput and inflight counts to notification-svc before and after the 02:12 max_inflight change and around 03:00.",
+        "rationale": "Broker-side throughput data is needed to confirm or rule out the max_inflight throttling explanation. It is currently missing because of the metrics timeout.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Confirm the effective value of consumer.max_inflight on queue-broker from 02:12 to 03:30 UTC, including whether anything changed it around 03:00. Also confirm who changed it at 02:12 and why.",
+        "rationale": "H2 is weakened by recovery happening with the setting apparently unchanged. Verifying the actual effective value would either eliminate H2 or revive it.",
+        "hypothesis_id": "H2"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:2",
+        "tool": "metrics",
+        "reason": "timeout after 3 attempts",
+        "service": "queue-broker",
+        "affects_hypotheses": [
+          "H1",
+          "H2",
+          "H3"
+        ],
+        "task_id": "baseline"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 9,
+      "llm_calls": 11,
+      "tokens_in": 26299,
+      "tokens_out": 4432,
+      "cache_tokens": 0,
+      "latency_s": 49.297
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in baseline: partial result: 3 of 5 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H1",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.5,
+        "confidence_after": 0.4
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.3,
+        "confidence_after": 0.2
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H3",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.08,
+        "confidence_after": 0.0
+      }
+    ],
+    "failures": []
+  }
+}

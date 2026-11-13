@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc01",
+  "expected_outcome": "root_cause",
+  "service": "checkout-svc",
+  "category": "bad_deploy",
+  "key_evidence_ids": ["deploy:inc01:0001", "log:inc01:0003", "log:inc01:0004", "metric:inc01:err:0002"],
+  "traps": [
+    {
+      "description": "A coincidental noisy-neighbour CPU spike on the same node, plus a past incident blaming CPU, suggests capacity instead of the deploy",
+      "misleading_evidence_ids": ["log:inc01:0005", "metric:inc01:cpu:0001", "past:inc01:0001"]
+    },
+    {
+      "description": "payments-svc shipped a TLS library bump the day before and logs a slow TLS handshake mid-incident, suggesting a dependency failure; its own error rate and p99 stay healthy and the checkout errors are a NullPointerException in checkout code",
+      "misleading_evidence_ids": ["deploy:inc01:0002", "log:inc01:0008"]
+    }
+  ]
+}

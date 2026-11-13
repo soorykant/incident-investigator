@@ -1,0 +1,712 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc07",
+  "system": "multi",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T07:04:53.598867Z",
+  "report": {
+    "incident_id": "inc07",
+    "outcome": "INCONCLUSIVE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "cart-svc",
+        "category": "retry_storm",
+        "summary": "Root cause and the reason the alert has not cleared. The cart-svc client retries pricing-svc calls with max_attempts=5, backoff=0ms and jitter off. Once pricing-svc started returning 503s (first seen at 18:20:06Z, one second after the promo-db failover error), immediate synchronized retries multiplied load. Outbound pricing calls went from 420 to 7650 rps and pricing-svc CPU from 34% to 99%. At 99% CPU pricing-svc keeps failing, which keeps the retries going, so the overload sustains itself after a transient trigger. Storefront errors were still present at 18:35:44Z, and storefront's own 3 attempts against cart-svc add to the load. Retries alone cap at 5x per logical call, but the observed ratio is about 16.8 calls per inbound request. So per-item fan-out (h3 or h5) must supply the rest of the multiplier, and how much retries account for is unquantified until the baseline ratio and retry counters are known. Under this view h4 is the trigger, not a competing cause. Mitigation: cut retries to 1 with exponential backoff and jitter, and add a circuit breaker on pricing-svc.",
+        "supporting_ids": [
+          "log:inc07:0005",
+          "log:inc07:0006",
+          "log:inc07:0004",
+          "metric:inc07:cartout:0001",
+          "metric:inc07:cartout:0002",
+          "metric:inc07:pcpu:0001",
+          "metric:inc07:pcpu:0002",
+          "log:inc07:0008",
+          "log:inc07:0012",
+          "metric:inc07:sf5xx:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc07:cartin:0001"
+        ],
+        "proposed_confidence": 0.4,
+        "final_confidence": 0.4
+      },
+      {
+        "id": "h4",
+        "service": "promo-db",
+        "category": "dependency_failure",
+        "summary": "Trigger, not sustainer. A promo-db failover produced connection resets in pricing-svc at 18:20:05Z. pricing-svc returned 503s to cart-svc within one second (18:20:06Z), which started the retry storm in h1. A failover is transient, so this hypothesis cannot on its own explain storefront 502s still occurring at 18:35:44Z or the alert staying active for more than 30 minutes. It ranks below h1 as the root cause. Its only support is one pricing-svc log line. There is no promo-db failover or leader-election record. The single promo-db sample (22% CPU at 18:25Z) is neutral, because the failover may have finished before then. Next check: promo-db failover and leader-election events from 18:00Z to 18:25Z.",
+        "supporting_ids": [
+          "log:inc07:0004",
+          "log:inc07:0005",
+          "log:inc07:0006",
+          "dependency:inc07:0003",
+          "dependency:inc07:0004",
+          "log:inc07:0008",
+          "metric:inc07:sf5xx:0001",
+          "metric:inc07:sf5xx:0002"
+        ],
+        "contradicting_ids": [
+          "log:inc07:0012"
+        ],
+        "proposed_confidence": 0.25,
+        "final_confidence": 0.25
+      },
+      {
+        "id": "h3",
+        "service": "storefront",
+        "category": "bad_deploy",
+        "summary": "Load-first alternative. Storefront v12.3.0, deployed at 18:05Z with a home-page product carousel, is the only recorded change in the window. It may drive per-product pricing lookups through cart-svc. That fan-out would explain a calls-per-request ratio (about 16.8) that retries alone cannot reach, and could have pushed pricing-svc toward saturation, with the promo-db blip only tipping it over. Two samples count against it. Outbound pricing rps was 420 and pricing CPU was 34% at 18:15Z, ten minutes after the deploy, which looks near baseline. However, the samples are 10 minutes apart and inbound rps at 18:15Z is missing, so a rise that started before 18:20Z cannot be excluded. Deciding check: 1-minute series showing whether cart-svc outbound_pricing_rps and pricing-svc cpu_pct diverge before 18:20:05Z or after it. Mitigation if confirmed: turn the carousel off or roll back.",
+        "supporting_ids": [
+          "deploy:inc07:0001",
+          "metric:inc07:cartout:0002",
+          "metric:inc07:cartin:0001",
+          "metric:inc07:sf5xx:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc07:cartout:0001",
+          "metric:inc07:pcpu:0001"
+        ],
+        "proposed_confidence": 0.15,
+        "final_confidence": 0.15
+      },
+      {
+        "id": "h2",
+        "service": "pricing-svc",
+        "category": "capacity",
+        "summary": "pricing-svc lacks CPU headroom, as in the past holiday-sale incident. CPU went from 34% to 99%, and saturation causes cart-svc timeouts. Current data shows saturation following an 18x jump in calls from cart-svc and promo-db errors, so it looks like a consequence rather than an organic capacity shortfall. Scaling out may still help as a mitigation alongside the retry fixes.",
+        "supporting_ids": [
+          "metric:inc07:pcpu:0001",
+          "metric:inc07:pcpu:0002",
+          "past:inc07:0001",
+          "dependency:inc07:0003",
+          "log:inc07:0008"
+        ],
+        "contradicting_ids": [
+          "log:inc07:0004",
+          "log:inc07:0005",
+          "metric:inc07:cartout:0002"
+        ],
+        "proposed_confidence": 0.08,
+        "final_confidence": 0.08
+      },
+      {
+        "id": "h5",
+        "service": "cart-svc",
+        "category": "feature_flag",
+        "summary": "The source of the per-item fan-out (about 16.8 pricing calls per cart request, above the retry cap of 5) is unresolved. A feature-flag flip in cart-svc or pricing-svc, such as per-item price or promotion evaluation, would not appear in the deploys query, which cannot show flag changes. There is no direct evidence for a flip. This is kept as a low-confidence alternative to h3 as the fan-out source. Next check: the feature-flag audit log for cart-svc and pricing-svc from 17:30Z to 19:00Z.",
+        "supporting_ids": [
+          "metric:inc07:cartout:0002",
+          "metric:inc07:cartin:0001"
+        ],
+        "contradicting_ids": [
+          "deploy:inc07:0001"
+        ],
+        "proposed_confidence": 0.07,
+        "final_confidence": 0.07
+      }
+    ],
+    "facts": [
+      {
+        "statement": "The first storefront ERROR log in the window is at 2026-11-16T18:21:10Z: POST /cart/items returned 502 because cart-svc timed out after 3 attempts.",
+        "evidence_ids": [
+          "log:inc07:0008"
+        ]
+      },
+      {
+        "statement": "A second storefront ERROR at 2026-11-16T18:35:44Z shows GET /cart returning 502 because cart-svc timed out after 3 attempts.",
+        "evidence_ids": [
+          "log:inc07:0012"
+        ]
+      },
+      {
+        "statement": "Storefront error_rate_pct was 0.4 in the 18:15Z sample and 18.6 in the 18:25Z sample, so the rise falls between those two samples, consistent with the 18:21 onset.",
+        "evidence_ids": [
+          "metric:inc07:sf5xx:0001",
+          "metric:inc07:sf5xx:0002"
+        ]
+      },
+      {
+        "statement": "Storefront requests_per_s was 810.0 at 18:25Z.",
+        "evidence_ids": [
+          "metric:inc07:sfrps:0001"
+        ]
+      },
+      {
+        "statement": "Deploy v12.3.0 of storefront went out at 18:05Z, described as a new product carousel on the home page. This is about 16 minutes before the error onset.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "cart-svc outbound_pricing_rps rose from 420.0 at 18:15Z to 7650.0 at 18:25Z, while cart-svc requests_per_s was 455.0 at 18:25Z.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0001",
+          "metric:inc07:cartout:0002",
+          "metric:inc07:cartin:0001"
+        ]
+      },
+      {
+        "statement": "The deploys query for 2026-11-16T17:30:00Z to 2026-11-16T19:00:00Z across all services returned one change: storefront version v12.3.0 deployed at 2026-11-16T18:05:00Z, described as 'New product carousel on the home page'.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "The deploy query completed with status ok on a single attempt and reported 0 omitted rows.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "The storefront v12.3.0 deploy at 18:05:00Z occurred about 16 minutes before the reported 5xx onset at about 18:21 UTC.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "No cart or pricing deploys or config changes appear in the 17:30 to 19:00 UTC window.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "Storefront has downstream dependencies on cart-svc and catalog-svc.",
+        "evidence_ids": [
+          "dependency:inc07:0001",
+          "dependency:inc07:0002"
+        ]
+      },
+      {
+        "statement": "cart-svc has a downstream dependency on pricing-svc.",
+        "evidence_ids": [
+          "dependency:inc07:0003"
+        ]
+      },
+      {
+        "statement": "pricing-svc has a downstream dependency on promo-db.",
+        "evidence_ids": [
+          "dependency:inc07:0004"
+        ]
+      },
+      {
+        "statement": "The dependency graph shows a cart chain of storefront -> cart-svc -> pricing-svc -> promo-db. Nothing in the returned graph links storefront to session or cache stores.",
+        "evidence_ids": [
+          "dependency:inc07:0001",
+          "dependency:inc07:0003",
+          "dependency:inc07:0004"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'pricing-svc CPU saturation during holiday sale' records root cause 'pricing-svc ran out of CPU at peak traffic' and resolution 'Scaled pricing-svc out to 3x replicas'. This is the only past incident returned for the cart, pricing, and promotions queries.",
+        "evidence_ids": [
+          "past:inc07:0001"
+        ]
+      },
+      {
+        "statement": "The first dependencies call for storefront returned partial results (1 of 2 rows missing). The repeat call returned both rows with status ok, closing gap:1.",
+        "evidence_ids": [
+          "dependency:inc07:0001",
+          "dependency:inc07:0002"
+        ]
+      },
+      {
+        "statement": "pricing-svc cpu_pct was 34.0 at 18:15:00Z and 99.0 at 18:25:00Z.",
+        "evidence_ids": [
+          "metric:inc07:pcpu:0001",
+          "metric:inc07:pcpu:0002"
+        ]
+      },
+      {
+        "statement": "cart-svc outbound_pricing_rps was 420.0 at 18:15:00Z and 7650.0 at 18:25:00Z.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0001",
+          "metric:inc07:cartout:0002"
+        ]
+      },
+      {
+        "statement": "promo-db cpu_pct was 22.0 at 18:25:00Z. No other promo-db metric samples were returned in the 17:55Z to 18:40Z window.",
+        "evidence_ids": [
+          "metric:inc07:pdb:0001"
+        ]
+      },
+      {
+        "statement": "pricing-svc logged an ERROR at 18:20:05Z: 'promo-db query failed: connection reset (failover in progress)'.",
+        "evidence_ids": [
+          "log:inc07:0004"
+        ]
+      },
+      {
+        "statement": "cart-svc outbound_pricing_rps was 420.0 at 18:15:00Z and 7650.0 at 18:25:00Z, about an 18.2x increase.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0001",
+          "metric:inc07:cartout:0002"
+        ]
+      },
+      {
+        "statement": "cart-svc requests_per_s (inbound) was 455.0 at 18:25:00Z.",
+        "evidence_ids": [
+          "metric:inc07:cartin:0001"
+        ]
+      },
+      {
+        "statement": "At 18:25:00Z, cart-svc made about 16.8 outbound pricing calls per inbound request (7650 / 455), computed from the two cited values. The two samples are at the same timestamp, so this is a rough ratio.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0002",
+          "metric:inc07:cartin:0001"
+        ]
+      },
+      {
+        "statement": "Storefront error_rate_pct rose from 0.4% at 18:15:00Z to 18.6% at 18:25:00Z.",
+        "evidence_ids": [
+          "metric:inc07:sf5xx:0001",
+          "metric:inc07:sf5xx:0002"
+        ]
+      },
+      {
+        "statement": "Storefront requests_per_s was 810.0 at 18:25:00Z.",
+        "evidence_ids": [
+          "metric:inc07:sfrps:0001"
+        ]
+      },
+      {
+        "statement": "Storefront deployed v12.3.0 at 18:05:00Z, described as 'New product carousel on the home page'. No other deploys or config changes appear for any service in 17:50Z–18:40Z.",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      },
+      {
+        "statement": "cart-svc logged 'pricing-svc call failed (503)' at 18:20:06Z for retry 1/5 and retry 5/5. The client is configured with max_attempts=5, backoff=0ms, and jitter=off.",
+        "evidence_ids": [
+          "log:inc07:0005",
+          "log:inc07:0006"
+        ]
+      },
+      {
+        "statement": "The storefront ERROR-level log query for 18:15-18:35Z returned one line: at 18:21:10Z, POST /cart/items failed with 502 because cart-svc timed out after 3 attempts.",
+        "evidence_ids": [
+          "log:inc07:0008"
+        ]
+      },
+      {
+        "statement": "storefront error_rate_pct was 0.4 at 18:15Z and 18.6 at 18:25Z.",
+        "evidence_ids": [
+          "metric:inc07:sf5xx:0001",
+          "metric:inc07:sf5xx:0002"
+        ]
+      },
+      {
+        "statement": "storefront requests_per_s was 810.0 at 18:25Z.",
+        "evidence_ids": [
+          "metric:inc07:sfrps:0001"
+        ]
+      },
+      {
+        "statement": "The one ERROR log line is the only 5xx log evidence in the window, and its endpoint and upstream (POST /cart/items to cart-svc) match the reported add-to-cart symptom.",
+        "evidence_ids": [
+          "log:inc07:0008"
+        ]
+      },
+      {
+        "statement": "cart-svc outbound_pricing_rps was 420.0 at 18:15:00Z.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0001"
+        ]
+      },
+      {
+        "statement": "cart-svc outbound_pricing_rps was 7650.0 at 18:25:00Z, about 18x the 18:15Z value.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0002"
+        ]
+      },
+      {
+        "statement": "cart-svc requests_per_s (inbound) was 455.0 at 18:25:00Z. No inbound sample was returned for 18:00Z, 18:10Z or 18:15Z.",
+        "evidence_ids": [
+          "metric:inc07:cartin:0001"
+        ]
+      },
+      {
+        "statement": "At 18:25:00Z the outbound/inbound pricing-call ratio was about 16.8 (7650 / 455). The ratio at 18:00Z, 18:10Z and 18:15Z cannot be computed because the matching inbound samples are missing.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0002",
+          "metric:inc07:cartin:0001"
+        ]
+      },
+      {
+        "statement": "pricing-svc cpu_pct was 34.0 at 18:15:00Z and 99.0 at 18:25:00Z, so pricing CPU went from 34% to 99% between those two samples.",
+        "evidence_ids": [
+          "metric:inc07:pcpu:0001",
+          "metric:inc07:pcpu:0002"
+        ]
+      },
+      {
+        "statement": "The outbound_pricing_rps rise occurred somewhere between the 18:15Z and 18:25Z samples. The exact onset minute cannot be pinned, and the 1-minute resolution was not returned.",
+        "evidence_ids": [
+          "metric:inc07:cartout:0001",
+          "metric:inc07:cartout:0002"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The failing upstream is cart-svc, and the 502s come from storefront timing out on cart-svc calls.",
+        "basis": "Both returned ERROR logs name cart-svc as the timeout source.",
+        "how_to_verify": "Pull storefront logs for 18:15-18:35Z at all levels, then group 5xx by endpoint and upstream target. Gap gap:2 (backend error on this query) must be retried."
+      },
+      {
+        "statement": "Browse paths are healthy, and errors are limited to add-to-cart and cart-total paths.",
+        "basis": "Only two ERROR lines were returned, both on /cart paths, but the query had no endpoint breakdown and no successful-request data. Not confirmed.",
+        "how_to_verify": "Query storefront 5xx and request counts by endpoint for the window. Confirm browse endpoints show near-zero 5xx."
+      },
+      {
+        "statement": "The log result is incomplete. It returned only two ERROR lines, yet error_rate_pct was 18.6% at about 810 rps, which implies far more failing requests. Logs are probably sampled or truncated.",
+        "basis": "Log result shows attempts=1 and omitted=0, and the mid-window retry failed with gap:2. The metric and log counts do not reconcile.",
+        "how_to_verify": "Retry the storefront ERROR log query for 18:15-18:35Z, then compare its count with the 5xx metric totals for the same window."
+      },
+      {
+        "statement": "Deploy v12.3.0 (home page carousel) is not the direct cause. It is not shown to touch cart or pricing paths.",
+        "basis": "The deploy description is a home-page UI change, and the errors are on cart paths. The timing lag is about 16 minutes. No change to cart-svc or pricing was listed in the deploy window.",
+        "how_to_verify": "Check the v12.3.0 diff and config for calls to cart-svc or pricing, and check whether the carousel adds any cart or pricing calls on page load."
+      },
+      {
+        "statement": "The outbound_pricing_rps spike in cart-svc (about 18x) is a likely contributor, with retries or fan-out driving pricing load and cart-svc timeouts.",
+        "basis": "Pricing load rose sharply within the same 18:15-18:25Z interval as the storefront error onset. Cart requests_per_s rose only modestly (455). The causal direction is not established.",
+        "how_to_verify": "Pull pricing-service metrics and logs for 18:10-18:30Z. Check cart-svc retry counters and timeout settings. Check whether the carousel triggers per-product price lookups."
+      },
+      {
+        "statement": "Latency and timeout metrics for storefront and cart-svc, and any pricing-service data, were not retrieved.",
+        "basis": "Only error_rate_pct and requests_per_s were returned for storefront. Only pricing and request rates were returned for cart-svc. The metrics call did not filter by name, and no pricing-service query was made.",
+        "how_to_verify": "Query storefront and cart-svc latency, timeout count, and upstream-call duration metrics. Query the pricing service's own metrics for 18:00-19:00Z."
+      },
+      {
+        "statement": "The deploys tool covers config changes as well as deployments, so no config changes to storefront, cart or pricing occurred in the window.",
+        "basis": "The tool description says it lists deployments and config changes, and the result contains only one entry.",
+        "how_to_verify": "Check the change-management system or the config store audit log for storefront, cart and pricing between 17:30 and 19:00 UTC."
+      },
+      {
+        "statement": "No feature-flag flips or infrastructure changes occurred in the window.",
+        "basis": "None of the available tools reports feature flags or infrastructure changes, so this is unverified rather than shown absent.",
+        "how_to_verify": "Query the feature-flag service audit log and the infrastructure change log (Terraform, Kubernetes rollouts, autoscaling, cloud provider events) for storefront, cart and pricing from 17:30 to 19:00 UTC."
+      },
+      {
+        "statement": "The v12.3.0 carousel change is the likely trigger for the cart and cart-total failures.",
+        "basis": "Timing is close (18:05 deploy, 18:21 onset), but the carousel is a home-page UI change and nothing yet links it to the add-to-cart or pricing calls.",
+        "how_to_verify": "Compare v12.3.0 diffs against the add-to-cart and cart-total code paths, and check whether the storefront calls cart and pricing differently after the deploy. Check error logs for cart and pricing around 18:05 to 18:25 UTC."
+      },
+      {
+        "statement": "The deploys result is complete for the related services, cart and pricing.",
+        "basis": "The query used service null (all services) and returned no omissions, which implies cart and pricing had no entries.",
+        "how_to_verify": "Re-query deploys with service set to cart and then to pricing for the same window and confirm the results match."
+      },
+      {
+        "statement": "catalog-svc is used only by browsing, not by add-to-cart or cart-totals.",
+        "basis": "catalog-svc is the only other storefront dependency returned and it does not appear in the cart chain (cart-svc -> pricing-svc -> promo-db).",
+        "how_to_verify": "Check storefront's code or call-trace spans for add-to-cart and cart-totals requests and confirm whether catalog-svc is called on those paths."
+      },
+      {
+        "statement": "Session and cache stores are either absent from the graph or not tracked by it, so the dependency map may be incomplete for the cart paths.",
+        "basis": "No session, cache, or promotions-store edge appears for storefront or cart-svc; the only promotions-related edge is pricing-svc -> promo-db.",
+        "how_to_verify": "Query dependencies for storefront and cart-svc with direction both, and check infrastructure inventory or service configs for session and cache endpoints."
+      },
+      {
+        "statement": "The cart-totals path reaches promotions only through pricing-svc and promo-db.",
+        "basis": "The graph shows pricing-svc -> promo-db and cart-svc -> pricing-svc, with no direct promo edge from cart-svc or storefront.",
+        "how_to_verify": "Inspect cart-svc's client configuration and trace spans to see whether promotions are called directly."
+      },
+      {
+        "statement": "No past incident was found where cart failed while browsing still worked. The search for that pattern returned only the pricing CPU saturation incident, which does not state whether browsing worked.",
+        "basis": "Both past_incidents queries returned only past:inc07:0001, and its payload says nothing about browsing.",
+        "how_to_verify": "Search past incidents with keywords such as 'browse ok', 'checkout failing', 'add to cart 500', or with tags such as 'storefront' and 'checkout', and review incidents for cart-svc and pricing-svc."
+      },
+      {
+        "statement": "The pricing-svc CPU saturation incident is a plausible but unconfirmed explanation for the current cart failures.",
+        "basis": "The past incident shows a pricing-svc failure mode that would fail cart totals. The graph shows cart-svc depends on pricing-svc. No current logs or metrics were pulled, so the link to this incident is unverified.",
+        "how_to_verify": "Pull pricing-svc and cart-svc metrics (CPU, error rate, latency) and ERROR logs for 18:00 to 19:00 UTC on 2026-11-16, and check whether they start near 18:21 UTC."
+      },
+      {
+        "statement": "The promo-db, pricing-svc, and cart-svc dependencies have not been checked for health during the incident window.",
+        "basis": "No logs or metrics calls were made. The dependency and past-incident tools returned only static graph and history data.",
+        "how_to_verify": "Query metrics and logs for promo-db, pricing-svc, and cart-svc over 2026-11-16T18:00:00Z to 2026-11-16T19:00:00Z."
+      },
+      {
+        "statement": "Errors are limited to cart paths, and browsing through catalog-svc is healthy.",
+        "basis": "The incident report says browsing works, and both returned ERROR logs are on /cart endpoints. There is no per-endpoint 5xx breakdown yet.",
+        "how_to_verify": "Query storefront 5xx and request counts by endpoint for 18:00-19:00Z, and confirm browse endpoints show near-zero 5xx."
+      },
+      {
+        "statement": "The baseline ratio of pricing calls to cart requests is far below the about 17:1 seen at 18:25Z.",
+        "basis": "Outbound pricing rps was 420 at 18:15Z. The cart-svc inbound rps at 18:15Z was not retrieved, so the baseline ratio is inferred, not measured.",
+        "how_to_verify": "Retrieve cart-svc requests_per_s at 18:15Z and earlier, and compute the pricing-calls-per-request ratio over time."
+      },
+      {
+        "statement": "No cart-svc, pricing-svc, promo-db, feature-flag or infrastructure changes occurred in the window.",
+        "basis": "The deploys query returned only storefront v12.3.0. Feature flags and infrastructure changes are not covered by the available tools.",
+        "how_to_verify": "Check the feature-flag audit log, the config store audit and infrastructure change logs for cart-svc, pricing-svc and promo-db from 17:30 to 19:00Z."
+      },
+      {
+        "statement": "The storefront log sample is incomplete, and gap:2 hides further error detail.",
+        "basis": "Only two ERROR lines came back, despite an 18.6% error rate at 810 rps. The mid-window log retry failed with a backend error.",
+        "how_to_verify": "Retry the storefront ERROR log query for 18:15-18:35Z, then group the results by endpoint and upstream target."
+      },
+      {
+        "statement": "The promo-db failover began before 18:20:05Z, because pricing-svc was already seeing connection resets from promo-db at that time.",
+        "basis": "The pricing-svc ERROR log at 18:20:05Z names a promo-db failover in progress.",
+        "how_to_verify": "Pull promo-db logs and events (failover, restart, leader election) from 18:00Z to 18:25Z, and check whether the log query returned nothing because promo-db emits no ERROR lines or because logs are missing."
+      },
+      {
+        "statement": "Causal direction between the promo-db failover and the cart-svc outbound_pricing_rps rise cannot be established from the data. Metric samples are 10 minutes apart, so the rise could have begun at any point between 18:15Z and 18:25Z, and the 18:15Z value of 420 rps may already be part of the rise.",
+        "basis": "Only 18:15Z and 18:25Z samples were returned for cart-svc and pricing-svc; the requested finer resolution was not available.",
+        "how_to_verify": "Query cart-svc outbound_pricing_rps and pricing-svc cpu_pct and error rate at 1-minute resolution from 18:10Z to 18:30Z, and compare the first divergence from baseline in each series against the 18:20:05Z promo-db failure log."
+      },
+      {
+        "statement": "Pricing-svc replica count, p99 latency, error rate and inbound rps were not returned, even though they were requested.",
+        "basis": "The unfiltered pricing-svc metrics call returned only cpu_pct samples.",
+        "how_to_verify": "Re-query pricing-svc with name set to each of replica count, p99 latency, error rate and inbound rps for 17:55Z to 18:40Z."
+      },
+      {
+        "statement": "promo-db query latency, connection count and error metrics were not returned, so the promo-db degradation timing is unknown.",
+        "basis": "The promo-db metrics call returned only a single cpu_pct sample at 18:25:00Z, with no baseline before it.",
+        "how_to_verify": "Re-query promo-db with name set to query latency, connections and errors for 17:55Z to 18:40Z, and check whether the metric names exist in this telemetry system."
+      },
+      {
+        "statement": "The promo-db ERROR log query for 17:55Z to 18:40Z returned no entries.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The retry policy (max_attempts=5, no backoff, no jitter) is contributing to pricing-svc load. Retries against a failing pricing-svc would then cause immediate, synchronized re-attempts.",
+        "basis": "Log lines at 18:20:06Z show retries reaching 5/5 with backoff=0ms and jitter=off.",
+        "how_to_verify": "Pull pricing-svc inbound rps and 503 rate over 18:00Z–18:30Z, and cart-svc retry counters, to confirm retries are a large share of the 7650 rps."
+      },
+      {
+        "statement": "Retries alone cannot explain the ~17x pricing-call-per-request ratio, because max_attempts=5 caps pricing calls per logical pricing call at 5. A per-item fan-out (one pricing call per cart or carousel item) must be multiplying the load, with retries as a secondary amplifier.",
+        "basis": "Arithmetic from the cited values: 7650/455 ≈ 16.8 outbound calls per inbound request, versus a retry cap of 5 attempts per call.",
+        "how_to_verify": "Get cart-svc outbound pricing calls per request and items per request (by endpoint and caller) for 18:00Z, 18:10Z and 18:15Z. A rising items-per-cart ratio confirms fan-out."
+      },
+      {
+        "statement": "The carousel added in v12.3.0 is the likely source of the new traffic that drives the fan-out, starting around 18:05Z.",
+        "basis": "The deploy at 18:05:00Z is the only change in the window and is described as a home-page carousel. The outbound rise (420 at 18:15Z to 7650 at 18:25Z) follows it. The 18:00Z and 18:10Z points are missing, so the onset cannot be pinned.",
+        "how_to_verify": "Pull storefront-to-cart-svc call rate by storefront endpoint (home page, carousel, add-to-cart, cart totals) for 17:50Z–18:40Z and check whether the home/carousel call rate rises after 18:05Z."
+      },
+      {
+        "statement": "No baseline or intermediate samples exist in the returned data for cart-svc requests_per_s, outbound_pricing_rps, or retry/timeout counters at 18:00Z and 18:10Z. The 18x comparison therefore rests on 18:15Z and 18:25Z only.",
+        "basis": "The metrics results returned single samples at 18:15Z and 18:25Z only. The metrics tool has no endpoint or caller filter, and the logs were WARN-only and returned two lines.",
+        "how_to_verify": "Re-query cart-svc metrics at 1-minute resolution from 17:50Z to 18:40Z, and pull INFO/ERROR logs for cart-svc with request-source fields."
+      },
+      {
+        "statement": "The 18x amplification is confirmed as a retry loop, per-item fan-out, or new carousel traffic. The data so far supports fan-out plus retries, with the carousel as the probable trigger, but these have not been separated.",
+        "basis": "The facts show the ratio, the retry behavior, and the timing of the deploy, but no per-endpoint or per-caller breakdown.",
+        "how_to_verify": "Compare cart-svc pricing calls per cart request and retry count per request across the carousel endpoint and other endpoints, before and after 18:05Z."
+      },
+      {
+        "statement": "The logs do not reconcile with the metrics. 18.6% of 810 rps is about 150 failing requests per second, but the log query returned only one 5xx-related ERROR line in 20 minutes. The logs are therefore either sampled, truncated, or not emitting one line per failed request.",
+        "basis": "Arithmetic from metric:inc07:sf5xx:0002 and metric:inc07:sfrps:0001 compared with the single line in log:inc07:0008. The log result reports omitted:0, so the drop is not reported by the tool.",
+        "how_to_verify": "Pull storefront access logs or request counters by status code and route for 18:15-18:35Z, and check whether the logging pipeline samples or drops ERROR lines during high volume."
+      },
+      {
+        "statement": "The WARN and INFO queries for 18:15-18:35Z returned no log lines. This is not evidence that no warnings or info events occurred.",
+        "basis": "Both tool results returned empty evidence lists with attempts:1 and omitted:0. The INFO query was not in the original retry plan.",
+        "how_to_verify": "Re-run the WARN query with a wider window and check whether the log pipeline has a known gap for storefront in this period."
+      },
+      {
+        "statement": "Browse and catalog-svc endpoints are clean in the window. This is not confirmed.",
+        "basis": "The log tool has no endpoint filter, and the only 5xx line is for /cart/items. Absence of errors in a sample is not proof the endpoints are healthy.",
+        "how_to_verify": "Group storefront 5xx by route and upstream target from access logs or traces for 18:15-18:35Z, and check per-route error-rate metrics for browse and catalog routes."
+      },
+      {
+        "statement": "Home-page and carousel requests do not fail or call cart-svc. This is unknown.",
+        "basis": "No returned log or metric is attributed to home-page or carousel routes, and the dependency graph was not queried in this step.",
+        "how_to_verify": "Query dependencies for storefront (downstream) to see whether the home or carousel path calls cart-svc, then check traces or route-level logs for those requests in the window."
+      },
+      {
+        "statement": "The 5xx onset is about 18:21Z, consistent with the single cart-svc timeout line at 18:21:10Z. The 0.4% reading at 18:15Z suggests the error rate was near baseline before onset.",
+        "basis": "Timing comparison between log:inc07:0008 and the two error_rate_pct samples. Metric samples are only 10 minutes apart, so the onset time is coarse.",
+        "how_to_verify": "Pull error_rate_pct at 1-minute resolution from 18:15Z to 18:30Z to pin the onset."
+      },
+      {
+        "statement": "The rise in cart-svc outbound pricing traffic began after the 18:20:05Z promo-db failover, not before it.",
+        "basis": "The 420 rps sample at 18:15Z looks near baseline. The retry logs appear at 18:20:06Z. Samples are 10 minutes apart, so this is not proven.",
+        "how_to_verify": "Query cart-svc outbound_pricing_rps and pricing-svc cpu_pct at 1-minute resolution from 18:10Z to 18:30Z, and compare the first divergence against 18:20:05Z."
+      },
+      {
+        "statement": "Per-item fan-out, not retries alone, accounts for most of the roughly 17 pricing calls per cart-svc request.",
+        "basis": "max_attempts=5 caps retry amplification at 5x. The observed ratio is 7650 divided by 455, about 16.8.",
+        "how_to_verify": "Pull cart-svc pricing calls per request and items per request, by endpoint and caller, before and after 18:05Z."
+      },
+      {
+        "statement": "Storefront errors are confined to cart paths that call cart-svc.",
+        "basis": "The incident report says browsing works, and the only ERROR log lines are on /cart routes. Logs reconcile poorly with about 150 failing requests per second.",
+        "how_to_verify": "Group storefront 5xx by route and upstream target from access logs or traces for 18:15Z to 18:35Z."
+      },
+      {
+        "statement": "The promo-db failover was a real event that started shortly before 18:20Z and may have completed since.",
+        "basis": "This rests only on the pricing-svc log message. No promo-db event was retrieved. promo-db CPU was 22 percent at 18:25Z.",
+        "how_to_verify": "Pull promo-db event, failover and replication logs, and connection error metrics, from 18:00Z to 18:40Z."
+      },
+      {
+        "statement": "The 18:15Z outbound value of 420 rps is pre-surge baseline.",
+        "basis": "pricing-svc cpu_pct was 34% at 18:15Z, which is consistent with normal load, and the surge is not visible until the 18:25Z sample.",
+        "how_to_verify": "Pull cart-svc outbound_pricing_rps and requests_per_s at 1-minute resolution from 18:00Z to 18:30Z to get the baseline ratio and the exact first divergent minute."
+      },
+      {
+        "statement": "The 18:05Z storefront deploy and the 18:20:05Z promo-db failover occurred as stated in the task parameters, but they are not confirmed by any tool result.",
+        "basis": "These timestamps come from the task description and the incident context, not from deploy or log evidence retrieved in this run.",
+        "how_to_verify": "Query deploys for storefront 18:00Z-18:30Z and promo-db failover/leader-election logs 18:00Z-18:25Z."
+      },
+      {
+        "statement": "The surge began after the 18:15Z sample and before or at the 18:25Z sample, and it is linked to the reported 18:21Z symptom onset and the promo-db failover.",
+        "basis": "The values bracket the onset, and the symptom onset and failover timing are close to the bracket. This is a timing inference, not a verified causal link.",
+        "how_to_verify": "Obtain 1-minute cart-svc outbound_pricing_rps and pricing-svc cpu_pct for 18:15Z-18:25Z, and promo-db failover logs to confirm the sequence."
+      },
+      {
+        "statement": "The inbound requests_per_s sample is not representative of the 18:00Z-18:15Z ratio, so the baseline outbound/inbound ratio is unknown.",
+        "basis": "Only one inbound sample (18:25Z) was returned, and the query with name=requests_per_s returned the same single point, so no baseline inbound data exists in the results.",
+        "how_to_verify": "Re-query cart-svc requests_per_s at 1-minute resolution for 18:00Z-18:15Z, or check whether the metric has a retention or sampling gap."
+      },
+      {
+        "statement": "No promo-db failover or leader-election log evidence was retrieved, so the failover start and end are not confirmed by tool results.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "h1 and h4 are complementary: h4 is the trigger and h1 is the sustaining amplifier. The persistence of the alert is attributed to the retry loop, not to an ongoing promo-db failover.",
+        "basis": "Critic's argument that a failover is transient. Errors were still present at 18:35:44Z (log:inc07:0012), and the retry policy is backoff=0ms with jitter off (log:inc07:0006).",
+        "how_to_verify": "Confirm the failover end time from promo-db events. Check whether pricing-svc 503s and cart-svc retry counters stay elevated after it."
+      },
+      {
+        "statement": "The 420 rps at 18:15Z is near the pre-incident baseline, but this is not proven.",
+        "basis": "Pricing CPU was 34% at 18:15Z. Samples are 10 minutes apart, and inbound rps at 18:15Z is missing (c2.1).",
+        "how_to_verify": "Get cart-svc outbound_pricing_rps, requests_per_s and pricing-svc cpu_pct at 1-minute resolution for 18:00Z to 18:30Z, and find the first divergence relative to 18:05Z and 18:20:05Z."
+      },
+      {
+        "statement": "Per-item fan-out accounts for the share of the about 16.8 calls per request that exceeds what retries can produce, and its source (carousel deploy or a flag) is unknown.",
+        "basis": "max_attempts=5 caps retry amplification at 5x, while the observed ratio is 7650/455.",
+        "how_to_verify": "Get cart-svc pricing calls per request and items per request by endpoint and caller before and after 18:05Z, and check the feature-flag audit log."
+      },
+      {
+        "statement": "The promo-db failover actually happened shortly before 18:20Z.",
+        "basis": "Only the pricing-svc log line log:inc07:0004 supports it. No promo-db event record was retrieved.",
+        "how_to_verify": "Pull promo-db failover, leader-election and replication events for 18:00Z to 18:40Z (lower-priority item in the focused task)."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Reduce the cart-svc to pricing-svc retry policy from max_attempts=5 with 0ms backoff and no jitter to a single retry with exponential backoff and jitter, and recommend deploying it to cart-svc as soon as it can be validated.",
+        "rationale": "Immediate retries against an already-saturated pricing-svc are the feedback loop that keeps its CPU at 99% and the alert active. Cutting retries removes the self-sustaining load even if the original trigger has passed.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend adding a circuit breaker on cart-svc calls to pricing-svc so that, once failures cross a threshold, cart-svc fails fast or serves a degraded cart total instead of sending more load.",
+        "rationale": "A breaker lets pricing-svc recover without requiring every retry to be stopped by hand, and limits the storefront 5xx impact of any future dependency blip.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend pulling baseline per-request pricing call ratios and cart-svc retry counters for 17:30Z to 18:30Z to quantify how much of the roughly 16.8 calls per inbound request retries account for, versus per-item fan-out.",
+        "rationale": "The retry cap of 5 cannot explain a 16.8x ratio alone, so the retry contribution is unquantified. This measurement determines how much weight h1 and the fan-out hypotheses should carry in the final root cause.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Recommend pulling 1-minute series for cart-svc outbound_pricing_rps, pricing-svc cpu_pct, and storefront inbound rps from 18:00Z to 18:30Z, to check whether the rise in pricing calls begins before the 18:20:05Z promo-db error.",
+        "rationale": "This is the deciding check for h3. A divergence before 18:20:05Z would support the carousel fan-out as the load source. A divergence only after it would weaken h3.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "If the 1-minute series show pricing fan-out starting before 18:20:05Z, recommend disabling the home-page product carousel in storefront v12.3.0 as a fast mitigation, with a full rollback to the prior version as the fallback.",
+        "rationale": "The carousel is the only recorded change in the window and could drive per-product pricing lookups. Turning it off is faster and more reversible than a rollback, and it is only justified if the timing check supports h3.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "Recommend pulling promo-db failover and leader-election events from 18:00Z to 18:25Z to confirm the trigger timing and duration.",
+        "rationale": "The only support for h4 is one pricing-svc log line, and no failover record exists in the data. Confirming the event anchors the trigger and checks whether the failover finished before the storm started.",
+        "hypothesis_id": "h4"
+      },
+      {
+        "action": "Recommend auditing the feature-flag change log for cart-svc and pricing-svc from 17:30Z to 19:00Z, looking for per-item price or promotion evaluation flags.",
+        "rationale": "The deploys query cannot show flag changes, so a flip could be the source of the per-item fan-out and would not appear in existing evidence. The audit either finds it or rules it out.",
+        "hypothesis_id": "h5"
+      },
+      {
+        "action": "Recommend scaling pricing-svc out horizontally as temporary capacity relief while the retry and circuit-breaker changes are made.",
+        "rationale": "Added capacity gives pricing-svc headroom to recover from saturation. It does not address the retry loop or the fan-out source, so it should be paired with the h1 changes rather than used alone.",
+        "hypothesis_id": "h2"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 30,
+      "llm_calls": 47,
+      "tokens_in": 151751,
+      "tokens_out": 50895,
+      "cache_tokens": 0,
+      "latency_s": 295.484
+    },
+    "terminated_by": "tool_budget",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in t1: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "dependencies gap in t3: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "cart-svc",
+    "expected_category": "retry_storm",
+    "correct": false,
+    "accuracy_reason": "outcome_mismatch",
+    "citations": 91,
+    "grounded": 91,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 4,
+        "rationale": "Core claims are backed by their cited rows: retry config and timing come from log:inc07:0005/0006, the 420→7650 rps rise from metric:inc07:cartout:0001/0002, the 455 inbound rps from metric:inc07:cartin:0001, CPU 34→99 from metric:inc07:pcpu:0001/0002, and persistence at 18:35:44Z from log:inc07:0012. Some absence claims (no cart or pricing deploys or config changes) rest on a single row, deploy:inc07:0001. A few assumption bases also misdescribe the data: 'no logs or metrics calls were made', and the deploy and failover being 'not confirmed by any tool result' even though deploy:inc07:0001 and log:inc07:0004 are cited elsewhere."
+      },
+      "fact_assumption_separation": {
+        "score": 3,
+        "rationale": "Facts are mostly direct observations, and many inferences carry a basis and a verification step. However, the assumptions list is cluttered with stale and contradictory entries: the carousel is both 'not the direct cause' and 'the likely trigger', and one entry says the amplification is 'confirmed' while admitting it is not separated. The repeated fan-out claim (16.8 > 5) is stated fairly firmly even though the baseline ratio is admittedly unknown."
+      },
+      "recommended_actions": {
+        "score": 4,
+        "rationale": "Leading with retry reduction (backoff and jitter) and a circuit breaker on cart-svc→pricing-svc directly addresses the actual retry storm, and the follow-up measurements to quantify retries are sensible. Disabling the carousel is gated on a timing check. Scaling pricing-svc echoes the past-incident trap, but it is framed as temporary relief paired with the retry fix, so it is mildly wasteful rather than harmful."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The top hypothesis h1 is a cart-svc retry storm. It treats pricing-svc's 99% CPU (metric:inc07:pcpu:0002) and the past incident (past:inc07:0001) as consequences, explicitly ranking h2 as a downstream effect. It rejects the promo-db failover (log:inc07:0004) as the sustaining cause because errors persist at 18:35Z, and ranks the storefront deploy low."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 18618,
+      "tokens_out": 1557,
+      "cache_tokens": 0
+    },
+    "latency_s": 15.267,
+    "judged_at": "2026-11-13T07:28:33.052448Z"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "id": "inc01",
+  "report": {
+    "title": "Checkout requests failing with HTTP 500",
+    "symptoms": [
+      "Checkout error rate above 20% since about 10:05 UTC",
+      "Customers report payment page errors"
+    ],
+    "affected_service": "checkout-svc",
+    "window_start": "2026-11-10T09:45:00Z",
+    "window_end": "2026-11-10T10:30:00Z",
+    "severity": "SEV2"
+  },
+  "logs": [
+    {"id": "log:inc01:0001", "timestamp": "2026-11-10T09:50:12Z", "service": "checkout-svc", "level": "INFO", "message": "GET /health 200"},
+    {"id": "log:inc01:0002", "timestamp": "2026-11-10T10:02:30Z", "service": "checkout-svc", "level": "INFO", "message": "Starting checkout-svc v2.3.1"},
+    {"id": "log:inc01:0003", "timestamp": "2026-11-10T10:04:51Z", "service": "checkout-svc", "level": "ERROR", "message": "NullPointerException in PriceCalculator.applyDiscount (v2.3.1)"},
+    {"id": "log:inc01:0004", "timestamp": "2026-11-10T10:05:07Z", "service": "checkout-svc", "level": "ERROR", "message": "POST /checkout 500: NullPointerException in PriceCalculator.applyDiscount"},
+    {"id": "log:inc01:0005", "timestamp": "2026-11-10T10:06:40Z", "service": "search-svc", "level": "WARN", "message": "CPU throttling detected on node ip-10-0-3-17"},
+    {"id": "log:inc01:0006", "timestamp": "2026-11-10T10:07:02Z", "service": "checkout-svc", "level": "ERROR", "message": "POST /checkout 500: NullPointerException in PriceCalculator.applyDiscount"},
+    {"id": "log:inc01:0007", "timestamp": "2026-11-10T11:15:00Z", "service": "checkout-svc", "level": "INFO", "message": "GET /health 200"},
+    {"id": "log:inc01:0008", "timestamp": "2026-11-10T10:05:30Z", "service": "payments-svc", "level": "WARN", "message": "TLS handshake to card-network took 1840ms, retrying once"},
+    {"id": "log:inc01:0009", "timestamp": "2026-11-10T10:06:10Z", "service": "payments-svc", "level": "INFO", "message": "authorize ok: 1204 requests in last 60s, p99=212ms, errors=0"}
+  ],
+  "metrics": [
+    {"id": "metric:inc01:cpu:0001", "timestamp": "2026-11-10T10:06:00Z", "service": "checkout-svc", "name": "node_cpu_pct", "value": 94.0},
+    {"id": "metric:inc01:err:0001", "timestamp": "2026-11-10T10:00:00Z", "service": "checkout-svc", "name": "error_rate_pct", "value": 0.4},
+    {"id": "metric:inc01:err:0002", "timestamp": "2026-11-10T10:06:00Z", "service": "checkout-svc", "name": "error_rate_pct", "value": 23.5},
+    {"id": "metric:inc01:pay:0001", "timestamp": "2026-11-10T10:06:00Z", "service": "payments-svc", "name": "error_rate_pct", "value": 0.1}
+  ],
+  "deploys": [
+    {"id": "deploy:inc01:0001", "timestamp": "2026-11-10T10:02:00Z", "service": "checkout-svc", "version": "v2.3.1", "description": "Discount engine refactor"},
+    {"id": "deploy:inc01:0002", "timestamp": "2026-11-09T16:20:00Z", "service": "payments-svc", "version": "v5.0.2", "description": "Bump TLS library"}
+  ],
+  "config_changes": [
+    {"id": "config:inc01:0001", "timestamp": "2026-11-10T09:58:00Z", "service": "search-svc", "key": "cache.ttl_seconds", "old_value": "300", "new_value": "60"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc01:0001", "service": "checkout-svc", "depends_on": "payments-svc"},
+    {"id": "dependency:inc01:0002", "service": "checkout-svc", "depends_on": "pricing-db"},
+    {"id": "dependency:inc01:0003", "service": "search-svc", "depends_on": "search-index"},
+    {"id": "dependency:inc01:0004", "service": "web-frontend", "depends_on": "checkout-svc"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc01:0001", "title": "Checkout latency from noisy neighbour", "tags": ["checkout", "cpu", "noisy-neighbour"], "root_cause": "Co-located batch job saturated node CPU", "resolution": "Moved batch job to a dedicated node pool"},
+    {"id": "past:inc01:0002", "title": "Checkout 500s after a pricing release", "tags": ["checkout", "deploy", "rollback"], "root_cause": "Release added a null-handling bug in discount code", "resolution": "Rolled back the release and added a null check"}
+  ],
+  "failure_schedule": [
+    {"tool": "metrics", "call_index": 2, "mode": "timeout"},
+    {"tool": "past_incidents", "call_index": 1, "mode": "partial", "partial_fraction": 0.5}
+  ]
+}

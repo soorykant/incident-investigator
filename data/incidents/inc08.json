@@ -1,0 +1,60 @@
+{
+  "id": "inc08",
+  "report": {
+    "title": "Recommendations missing for some users",
+    "symptoms": [
+      "recs-svc error rate about 6% overall since about 13:32 UTC",
+      "Most complaints come from customers in Europe",
+      "Home page shows an empty 'Recommended for you' row"
+    ],
+    "affected_service": "recs-svc",
+    "window_start": "2026-11-17T12:45:00Z",
+    "window_end": "2026-11-17T14:30:00Z",
+    "severity": "SEV3"
+  },
+  "logs": [
+    {"id": "log:inc08:0001", "timestamp": "2026-11-17T11:02:10Z", "service": "recs-svc", "level": "INFO", "message": "[all-regions] Starting recs-svc v6.0.0"},
+    {"id": "log:inc08:0002", "timestamp": "2026-11-17T13:10:30Z", "service": "recs-svc", "level": "INFO", "message": "[all-regions] Reloaded cache.size_mb=1024"},
+    {"id": "log:inc08:0003", "timestamp": "2026-11-17T13:30:05Z", "service": "recs-svc", "level": "INFO", "message": "[eu-west-1] flag ranker_v2 evaluated ON for 100% of requests"},
+    {"id": "log:inc08:0004", "timestamp": "2026-11-17T13:32:11Z", "service": "recs-svc", "level": "ERROR", "message": "[eu-west-1] GET /recs/u-8812 500: ranker_v2: feature 'session_affinity' not found in feature-store response"},
+    {"id": "log:inc08:0005", "timestamp": "2026-11-17T13:32:40Z", "service": "recs-svc", "level": "INFO", "message": "[us-east-1] GET /recs/u-1029 200 in 45ms (ranker_v1)"},
+    {"id": "log:inc08:0006", "timestamp": "2026-11-17T13:33:02Z", "service": "edge-lb", "level": "WARN", "message": "[eu-west-1] AZ eu-west-1b packet loss 2.8% on uplink, rerouting"},
+    {"id": "log:inc08:0007", "timestamp": "2026-11-17T13:34:15Z", "service": "recs-svc", "level": "ERROR", "message": "[eu-west-1] GET /recs/u-4471 500: ranker_v2: feature 'session_affinity' not found in feature-store response"},
+    {"id": "log:inc08:0008", "timestamp": "2026-11-17T13:36:00Z", "service": "edge-lb", "level": "INFO", "message": "[eu-west-1] AZ eu-west-1b uplink recovered"},
+    {"id": "log:inc08:0009", "timestamp": "2026-11-17T13:41:27Z", "service": "recs-svc", "level": "INFO", "message": "[ap-south-1] GET /recs/u-6610 200 in 52ms (ranker_v1)"},
+    {"id": "log:inc08:0010", "timestamp": "2026-11-17T13:48:50Z", "service": "recs-svc", "level": "ERROR", "message": "[eu-west-1] GET /recs/u-0915 500: ranker_v2: feature 'session_affinity' not found in feature-store response"},
+    {"id": "log:inc08:0011", "timestamp": "2026-11-17T13:50:00Z", "service": "feature-store", "level": "INFO", "message": "[eu-west-1] serving schema v41 (session_affinity added in v42, not yet backfilled in eu-west-1)"},
+    {"id": "log:inc08:0012", "timestamp": "2026-11-17T14:02:33Z", "service": "recs-svc", "level": "ERROR", "message": "[eu-west-1] GET /recs/u-7302 500: ranker_v2: feature 'session_affinity' not found in feature-store response"}
+  ],
+  "metrics": [
+    {"id": "metric:inc08:err:0001", "timestamp": "2026-11-17T13:25:00Z", "service": "recs-svc", "name": "error_rate_pct", "value": 0.2},
+    {"id": "metric:inc08:err:0002", "timestamp": "2026-11-17T13:40:00Z", "service": "recs-svc", "name": "error_rate_pct", "value": 6.1},
+    {"id": "metric:inc08:eu:0001", "timestamp": "2026-11-17T13:25:00Z", "service": "recs-svc", "name": "error_rate_pct_eu_west_1", "value": 0.3},
+    {"id": "metric:inc08:eu:0002", "timestamp": "2026-11-17T13:40:00Z", "service": "recs-svc", "name": "error_rate_pct_eu_west_1", "value": 29.5},
+    {"id": "metric:inc08:us:0001", "timestamp": "2026-11-17T13:40:00Z", "service": "recs-svc", "name": "error_rate_pct_us_east_1", "value": 0.2},
+    {"id": "metric:inc08:ap:0001", "timestamp": "2026-11-17T13:40:00Z", "service": "recs-svc", "name": "error_rate_pct_ap_south_1", "value": 0.1},
+    {"id": "metric:inc08:loss:0001", "timestamp": "2026-11-17T13:35:00Z", "service": "edge-lb", "name": "packet_loss_pct_eu_west_1", "value": 2.8},
+    {"id": "metric:inc08:loss:0002", "timestamp": "2026-11-17T13:45:00Z", "service": "edge-lb", "name": "packet_loss_pct_eu_west_1", "value": 0.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc08:0001", "timestamp": "2026-11-17T11:00:00Z", "service": "recs-svc", "version": "v6.0.0", "description": "Ship ranker_v2 behind a flag (default off), all regions"}
+  ],
+  "config_changes": [
+    {"id": "config:inc08:0001", "timestamp": "2026-11-17T13:30:00Z", "service": "recs-svc", "key": "flags.ranker_v2.enabled_regions", "old_value": "", "new_value": "eu-west-1"},
+    {"id": "config:inc08:0002", "timestamp": "2026-11-17T13:10:00Z", "service": "recs-svc", "key": "cache.size_mb", "old_value": "512", "new_value": "1024"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc08:0001", "service": "recs-svc", "depends_on": "feature-store"},
+    {"id": "dependency:inc08:0002", "service": "recs-svc", "depends_on": "catalog-svc"},
+    {"id": "dependency:inc08:0003", "service": "edge-lb", "depends_on": "web-frontend"},
+    {"id": "dependency:inc08:0004", "service": "web-frontend", "depends_on": "recs-svc"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc08:0001", "title": "EU-only errors from regional network partition", "tags": ["eu-west-1", "network", "region"], "root_cause": "Packet loss on an eu-west-1 uplink dropped requests between services", "resolution": "Provider fixed the uplink; added cross-AZ retries"},
+    {"id": "past:inc08:0002", "title": "Recommendations empty after ranker release", "tags": ["recs", "deploy", "ranker"], "root_cause": "A ranker release shipped a broken model file", "resolution": "Rolled back recs-svc"}
+  ],
+  "failure_schedule": [
+    {"tool": "metrics", "call_index": 1, "mode": "error"},
+    {"tool": "dependencies", "call_index": 1, "mode": "timeout"}
+  ]
+}

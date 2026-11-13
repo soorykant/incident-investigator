@@ -1,0 +1,628 @@
+{
+  "incident_id": "inc07",
+  "incident": {
+    "title": "Storefront 5xx alert firing",
+    "symptoms": [
+      "storefront 5xx rate above 18% since about 18:21 UTC",
+      "Add-to-cart and cart totals are failing; browsing works",
+      "The alert has not cleared after 30 minutes"
+    ],
+    "affected_service": "storefront",
+    "window_start": "2026-11-16T18:00:00Z",
+    "window_end": "2026-11-16T19:00:00Z",
+    "severity": "SEV1"
+  },
+  "started_at": "2026-11-13T07:04:53.609930Z",
+  "tasks": [],
+  "findings": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "facts": [
+        {
+          "statement": "storefront depends on cart-svc. The dependency result was partial: 1 of 2 downstream rows was missing.",
+          "evidence_ids": [
+            "dependency:inc07:0001"
+          ]
+        },
+        {
+          "statement": "storefront ERROR logs show POST /cart/items and GET /cart returning 502 because cart-svc timed out after 3 attempts, starting at 18:21:10Z and still happening at 18:35:44Z.",
+          "evidence_ids": [
+            "log:inc07:0008",
+            "log:inc07:0012"
+          ]
+        },
+        {
+          "statement": "promo-db began a planned primary failover for host patching at 18:20:01Z. It completed in 18s at 18:20:19Z. At 18:30:00Z promo-db reported itself healthy (CPU 21%, p99 query 4ms).",
+          "evidence_ids": [
+            "log:inc07:0002",
+            "log:inc07:0003",
+            "log:inc07:0011"
+          ]
+        },
+        {
+          "statement": "pricing-svc logged a promo-db connection reset during the failover at 18:20:05Z.",
+          "evidence_ids": [
+            "log:inc07:0004"
+          ]
+        },
+        {
+          "statement": "cart-svc retries failed pricing-svc calls (503) with max_attempts=5, backoff=0ms, jitter=off, starting at 18:20:06Z.",
+          "evidence_ids": [
+            "log:inc07:0005",
+            "log:inc07:0006"
+          ]
+        },
+        {
+          "statement": "At 18:26:02Z cart-svc logged 'Retry budget unlimited': 46,210 pricing-svc retries in 60s for 4,020 cart requests, which is about 11.5x amplification.",
+          "evidence_ids": [
+            "log:inc07:0010"
+          ]
+        },
+        {
+          "statement": "pricing-svc request queue was full (2000/2000) and rejecting with 503 at 18:20:40Z and again at 18:41:05Z. It also logged a 1.9s GC pause at 88% heap at 18:24:30Z.",
+          "evidence_ids": [
+            "log:inc07:0007",
+            "log:inc07:0013",
+            "log:inc07:0009"
+          ]
+        },
+        {
+          "statement": "pricing-svc CPU went from 34% at 18:15 to 99% at 18:25.",
+          "evidence_ids": [
+            "metric:inc07:pcpu:0001",
+            "metric:inc07:pcpu:0002"
+          ]
+        },
+        {
+          "statement": "The only deploy between 17:00 and 19:00 was storefront v12.3.0 at 18:05:00Z (home page product carousel).",
+          "evidence_ids": [
+            "deploy:inc07:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The pricing-client retry config in cart-svc (5 attempts, no backoff, no jitter, unlimited retry budget) predates the incident window, because no cart-svc config change appeared in the deploy query.",
+          "basis": "The deploys query from 17:00 to 19:00 returned only the storefront deploy.",
+          "how_to_verify": "Query deploys/config history for cart-svc over a longer window, and review the pricing-client config in source control."
+        },
+        {
+          "statement": "The missing second downstream dependency of storefront is probably a browse/catalog service that is unaffected, since browsing works.",
+          "basis": "The dependency result was partial (gap:1), and the symptoms say browsing works.",
+          "how_to_verify": "Re-run dependencies for storefront, and check that service's error rates."
+        },
+        {
+          "statement": "pricing-svc stays saturated after promo-db recovered because of the amplified retry traffic, not its own organic load.",
+          "basis": "promo-db was healthy by 18:30, but pricing-svc queue-full warnings continued at 18:41. cart-svc retries ran about 11x the cart request count.",
+          "how_to_verify": "Compare pricing-svc inbound request rate with cart-svc request rate. Disable or cap cart-svc retries (add backoff/jitter/budget) and watch whether pricing-svc recovers."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "dependency:inc07:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "storefront",
+        "depends_on": "cart-svc"
+      }
+    },
+    {
+      "id": "log:inc07:0008",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:21:10Z",
+      "payload": {
+        "service": "storefront",
+        "level": "ERROR",
+        "message": "POST /cart/items 502: cart-svc timed out after 3 attempts"
+      }
+    },
+    {
+      "id": "log:inc07:0012",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:35:44Z",
+      "payload": {
+        "service": "storefront",
+        "level": "ERROR",
+        "message": "GET /cart 502: cart-svc timed out after 3 attempts"
+      }
+    },
+    {
+      "id": "log:inc07:0005",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:06Z",
+      "payload": {
+        "service": "cart-svc",
+        "level": "WARN",
+        "message": "pricing-svc call failed (503), retry 1/5 (pricing-client: max_attempts=5, backoff=0ms, jitter=off)"
+      }
+    },
+    {
+      "id": "log:inc07:0006",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:06Z",
+      "payload": {
+        "service": "cart-svc",
+        "level": "WARN",
+        "message": "pricing-svc call failed (503), retry 5/5 (pricing-client: max_attempts=5, backoff=0ms, jitter=off)"
+      }
+    },
+    {
+      "id": "log:inc07:0010",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:26:02Z",
+      "payload": {
+        "service": "cart-svc",
+        "level": "ERROR",
+        "message": "Retry budget unlimited: 46,210 pricing-svc retries in last 60s for 4,020 cart requests"
+      }
+    },
+    {
+      "id": "deploy:inc07:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-16T18:05:00Z",
+      "payload": {
+        "service": "storefront",
+        "version": "v12.3.0",
+        "description": "New product carousel on the home page"
+      }
+    },
+    {
+      "id": "log:inc07:0004",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:05Z",
+      "payload": {
+        "service": "pricing-svc",
+        "level": "ERROR",
+        "message": "promo-db query failed: connection reset (failover in progress)"
+      }
+    },
+    {
+      "id": "log:inc07:0007",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:40Z",
+      "payload": {
+        "service": "pricing-svc",
+        "level": "WARN",
+        "message": "Request queue full (2000/2000), rejecting with 503"
+      }
+    },
+    {
+      "id": "log:inc07:0009",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:24:30Z",
+      "payload": {
+        "service": "pricing-svc",
+        "level": "WARN",
+        "message": "GC pause 1.9s under load (heap 88%)"
+      }
+    },
+    {
+      "id": "log:inc07:0013",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:41:05Z",
+      "payload": {
+        "service": "pricing-svc",
+        "level": "WARN",
+        "message": "Request queue full (2000/2000), rejecting with 503"
+      }
+    },
+    {
+      "id": "log:inc07:0002",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:01Z",
+      "payload": {
+        "service": "promo-db",
+        "level": "WARN",
+        "message": "Primary failover started (planned host patching)"
+      }
+    },
+    {
+      "id": "log:inc07:0003",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:20:19Z",
+      "payload": {
+        "service": "promo-db",
+        "level": "INFO",
+        "message": "Primary failover completed in 18s; accepting writes"
+      }
+    },
+    {
+      "id": "log:inc07:0011",
+      "kind": "log",
+      "timestamp": "2026-11-16T18:30:00Z",
+      "payload": {
+        "service": "promo-db",
+        "level": "INFO",
+        "message": "Health: CPU 21%, p99 query 4ms, replication healthy"
+      }
+    },
+    {
+      "id": "metric:inc07:pcpu:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-16T18:15:00Z",
+      "payload": {
+        "service": "pricing-svc",
+        "name": "cpu_pct",
+        "value": 34.0
+      }
+    },
+    {
+      "id": "metric:inc07:pcpu:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-16T18:25:00Z",
+      "payload": {
+        "service": "pricing-svc",
+        "name": "cpu_pct",
+        "value": 99.0
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "service": "cart-svc",
+      "category": "retry_storm",
+      "summary": "promo-db's brief planned failover caused transient pricing-svc failures. cart-svc's pricing-client then retried with zero backoff, no jitter and an unlimited budget, multiplying load on pricing-svc about 11x. That saturated its queue and CPU. The resulting self-sustaining retry storm keeps cart-svc timing out, so storefront cart endpoints return 502 long after promo-db recovered.",
+      "supporting_ids": [
+        "log:inc07:0005",
+        "log:inc07:0006",
+        "log:inc07:0010",
+        "log:inc07:0007",
+        "log:inc07:0013",
+        "metric:inc07:pcpu:0002",
+        "log:inc07:0009",
+        "log:inc07:0011",
+        "log:inc07:0008",
+        "log:inc07:0012"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.8,
+      "final_confidence": null
+    },
+    {
+      "id": "H2",
+      "service": "promo-db",
+      "category": "dependency_failure",
+      "summary": "The promo-db primary failover broke pricing-svc's DB access and caused the cart failures directly.",
+      "supporting_ids": [
+        "log:inc07:0002",
+        "log:inc07:0004",
+        "log:inc07:0003"
+      ],
+      "contradicting_ids": [
+        "log:inc07:0003",
+        "log:inc07:0011",
+        "log:inc07:0013"
+      ],
+      "proposed_confidence": 0.12,
+      "final_confidence": null
+    },
+    {
+      "id": "H3",
+      "service": "pricing-svc",
+      "category": "capacity",
+      "summary": "pricing-svc is under-provisioned (queue limit 2000, heap pressure) and cannot handle normal load, independent of retries.",
+      "supporting_ids": [
+        "log:inc07:0007",
+        "log:inc07:0009",
+        "metric:inc07:pcpu:0002"
+      ],
+      "contradicting_ids": [
+        "metric:inc07:pcpu:0001",
+        "log:inc07:0010"
+      ],
+      "proposed_confidence": 0.06,
+      "final_confidence": null
+    },
+    {
+      "id": "H4",
+      "service": "storefront",
+      "category": "bad_deploy",
+      "summary": "The storefront v12.3.0 deploy at 18:05 caused the 5xx errors.",
+      "supporting_ids": [
+        "deploy:inc07:0001"
+      ],
+      "contradicting_ids": [
+        "log:inc07:0008",
+        "log:inc07:0005",
+        "log:inc07:0002"
+      ],
+      "proposed_confidence": 0.02,
+      "final_confidence": null
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "dependencies",
+      "reason": "partial result: 1 of 2 rows missing",
+      "service": "storefront",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    },
+    {
+      "id": "gap:2",
+      "tool": "logs",
+      "reason": "tool backend error",
+      "service": "cart-svc",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:2"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 8,
+    "llm_calls": 10,
+    "tokens_in": 24532,
+    "tokens_out": 4403,
+    "cache_tokens": 0,
+    "llm_latency_s": 57.895
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T07:04:53.609979Z",
+      "ended_at": "2026-11-13T07:05:39.033737Z",
+      "status": "done",
+      "tool_calls": 8,
+      "llm_calls": 9
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc07",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "cart-svc",
+        "category": "retry_storm",
+        "summary": "promo-db's brief planned failover caused transient pricing-svc failures. cart-svc's pricing-client then retried with zero backoff, no jitter and an unlimited budget, multiplying load on pricing-svc about 11x. That saturated its queue and CPU. The resulting self-sustaining retry storm keeps cart-svc timing out, so storefront cart endpoints return 502 long after promo-db recovered.",
+        "supporting_ids": [
+          "log:inc07:0005",
+          "log:inc07:0006",
+          "log:inc07:0010",
+          "log:inc07:0007",
+          "log:inc07:0013",
+          "metric:inc07:pcpu:0002",
+          "log:inc07:0009",
+          "log:inc07:0011",
+          "log:inc07:0008",
+          "log:inc07:0012"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.8,
+        "final_confidence": 0.7
+      },
+      {
+        "id": "H3",
+        "service": "pricing-svc",
+        "category": "capacity",
+        "summary": "pricing-svc is under-provisioned (queue limit 2000, heap pressure) and cannot handle normal load, independent of retries.",
+        "supporting_ids": [
+          "log:inc07:0007",
+          "log:inc07:0009",
+          "metric:inc07:pcpu:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc07:pcpu:0001",
+          "log:inc07:0010"
+        ],
+        "proposed_confidence": 0.06,
+        "final_confidence": 0.06
+      },
+      {
+        "id": "H2",
+        "service": "promo-db",
+        "category": "dependency_failure",
+        "summary": "The promo-db primary failover broke pricing-svc's DB access and caused the cart failures directly.",
+        "supporting_ids": [
+          "log:inc07:0002",
+          "log:inc07:0004",
+          "log:inc07:0003"
+        ],
+        "contradicting_ids": [
+          "log:inc07:0003",
+          "log:inc07:0011",
+          "log:inc07:0013"
+        ],
+        "proposed_confidence": 0.12,
+        "final_confidence": 0.02
+      },
+      {
+        "id": "H4",
+        "service": "storefront",
+        "category": "bad_deploy",
+        "summary": "The storefront v12.3.0 deploy at 18:05 caused the 5xx errors.",
+        "supporting_ids": [
+          "deploy:inc07:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc07:0008",
+          "log:inc07:0005",
+          "log:inc07:0002"
+        ],
+        "proposed_confidence": 0.02,
+        "final_confidence": 0.02
+      }
+    ],
+    "facts": [
+      {
+        "statement": "storefront depends on cart-svc. The dependency result was partial: 1 of 2 downstream rows was missing.",
+        "evidence_ids": [
+          "dependency:inc07:0001"
+        ]
+      },
+      {
+        "statement": "storefront ERROR logs show POST /cart/items and GET /cart returning 502 because cart-svc timed out after 3 attempts, starting at 18:21:10Z and still happening at 18:35:44Z.",
+        "evidence_ids": [
+          "log:inc07:0008",
+          "log:inc07:0012"
+        ]
+      },
+      {
+        "statement": "promo-db began a planned primary failover for host patching at 18:20:01Z. It completed in 18s at 18:20:19Z. At 18:30:00Z promo-db reported itself healthy (CPU 21%, p99 query 4ms).",
+        "evidence_ids": [
+          "log:inc07:0002",
+          "log:inc07:0003",
+          "log:inc07:0011"
+        ]
+      },
+      {
+        "statement": "pricing-svc logged a promo-db connection reset during the failover at 18:20:05Z.",
+        "evidence_ids": [
+          "log:inc07:0004"
+        ]
+      },
+      {
+        "statement": "cart-svc retries failed pricing-svc calls (503) with max_attempts=5, backoff=0ms, jitter=off, starting at 18:20:06Z.",
+        "evidence_ids": [
+          "log:inc07:0005",
+          "log:inc07:0006"
+        ]
+      },
+      {
+        "statement": "At 18:26:02Z cart-svc logged 'Retry budget unlimited': 46,210 pricing-svc retries in 60s for 4,020 cart requests, which is about 11.5x amplification.",
+        "evidence_ids": [
+          "log:inc07:0010"
+        ]
+      },
+      {
+        "statement": "pricing-svc request queue was full (2000/2000) and rejecting with 503 at 18:20:40Z and again at 18:41:05Z. It also logged a 1.9s GC pause at 88% heap at 18:24:30Z.",
+        "evidence_ids": [
+          "log:inc07:0007",
+          "log:inc07:0013",
+          "log:inc07:0009"
+        ]
+      },
+      {
+        "statement": "pricing-svc CPU went from 34% at 18:15 to 99% at 18:25.",
+        "evidence_ids": [
+          "metric:inc07:pcpu:0001",
+          "metric:inc07:pcpu:0002"
+        ]
+      },
+      {
+        "statement": "The only deploy between 17:00 and 19:00 was storefront v12.3.0 at 18:05:00Z (home page product carousel).",
+        "evidence_ids": [
+          "deploy:inc07:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The pricing-client retry config in cart-svc (5 attempts, no backoff, no jitter, unlimited retry budget) predates the incident window, because no cart-svc config change appeared in the deploy query.",
+        "basis": "The deploys query from 17:00 to 19:00 returned only the storefront deploy.",
+        "how_to_verify": "Query deploys/config history for cart-svc over a longer window, and review the pricing-client config in source control."
+      },
+      {
+        "statement": "The missing second downstream dependency of storefront is probably a browse/catalog service that is unaffected, since browsing works.",
+        "basis": "The dependency result was partial (gap:1), and the symptoms say browsing works.",
+        "how_to_verify": "Re-run dependencies for storefront, and check that service's error rates."
+      },
+      {
+        "statement": "pricing-svc stays saturated after promo-db recovered because of the amplified retry traffic, not its own organic load.",
+        "basis": "promo-db was healthy by 18:30, but pricing-svc queue-full warnings continued at 18:41. cart-svc retries ran about 11x the cart request count.",
+        "how_to_verify": "Compare pricing-svc inbound request rate with cart-svc request rate. Disable or cap cart-svc retries (add backoff/jitter/budget) and watch whether pricing-svc recovers."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Stop the retry amplification in cart-svc's pricing-client. Use a config change or feature flag to cap retries at 0–1, and add exponential backoff with jitter and a bounded retry budget. Roll out a code change only if no runtime knob exists.",
+        "rationale": "H1 holds that zero-backoff, unlimited retries multiplied load on pricing-svc about 11x and keep the storm going after promo-db recovered. Removing the amplification is the most direct way to break the loop.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "If retry config cannot be changed quickly, shed load at the boundary. Rate-limit or circuit-break cart-svc calls to pricing-svc, or briefly drain pricing-svc's queue (for example a rolling restart) while the retry limit is applied.",
+        "rationale": "A self-sustaining retry storm may not clear while pricing-svc's queue and CPU stay saturated (metric:inc07:pcpu:0002, log:inc07:0007). Shedding or draining lets it recover.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "After mitigating, verify recovery. Check that cart-svc's retry and request rate to pricing-svc drops back to about the pre-18:21 baseline, that pricing-svc queue depth and CPU normalize, and that storefront cart endpoints stop returning 502 and the 5xx rate falls below the alert threshold.",
+        "rationale": "This confirms that removing the retry amplification resolves the symptoms, which validates H1 as the cause rather than an ongoing dependency or capacity fault.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Temporarily scale out pricing-svc (more replicas or a higher queue/heap limit) as a supporting measure only. Later compare its CPU and queue under normal, non-retry load against capacity.",
+        "rationale": "H3 has low confidence and is contradicted by baseline CPU (metric:inc07:pcpu:0001) and log:inc07:0010. Still, extra headroom speeds recovery, and a post-incident check rules out under-provisioning.",
+        "hypothesis_id": "H3"
+      },
+      {
+        "action": "Confirm promo-db's primary is healthy and pricing-svc's DB connections are succeeding after the failover. Do not roll back or fail over promo-db again.",
+        "rationale": "H2 is contradicted by evidence that promo-db recovered (log:inc07:0003, log:inc07:0013). A quick health check rules it out, and another failover would only re-trigger transient errors.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Do not roll back storefront v12.3.0 for now. Re-run the storefront dependencies query to fill the missing row (gap:1) and confirm the deploy didn't change cart call paths.",
+        "rationale": "H4 is contradicted (log:inc07:0008, log:inc07:0005, log:inc07:0002), since browsing works and errors began after the deploy. Completing the dependency data closes the remaining gap without risking an unnecessary rollback.",
+        "hypothesis_id": "H4"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:1",
+        "tool": "dependencies",
+        "reason": "partial result: 1 of 2 rows missing",
+        "service": "storefront",
+        "affects_hypotheses": [
+          "H1",
+          "H2"
+        ],
+        "task_id": "baseline"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 8,
+      "llm_calls": 10,
+      "tokens_in": 24532,
+      "tokens_out": 4403,
+      "cache_tokens": 0,
+      "latency_s": 57.901
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in baseline: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H1",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "dependencies gap in baseline: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": 0.8,
+        "confidence_after": 0.7
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "H2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "dependencies gap in baseline: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": 0.12,
+        "confidence_after": 0.02
+      }
+    ],
+    "failures": []
+  }
+}

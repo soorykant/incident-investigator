@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc04",
+  "expected_outcome": "root_cause",
+  "service": "image-resizer",
+  "category": "capacity",
+  "key_evidence_ids": ["metric:inc04:mem:0001", "metric:inc04:mem:0004", "metric:inc04:mem:0005", "metric:inc04:oom:0001", "log:inc04:0004", "log:inc04:0005"],
+  "traps": [
+    {
+      "description": "thumbnail-cache was deployed 30 minutes earlier and logs a cold start with a 12% hit ratio, suggesting a bad deploy pushed extra load onto image-resizer; but image-resizer's request rate is flat and its memory had been climbing for five days",
+      "misleading_evidence_ids": ["deploy:inc04:0001", "log:inc04:0001"]
+    },
+    {
+      "description": "Rejected oversized uploads and a past incident about 60 MB photos crashing the decoder suggest bad input; those uploads are rejected cleanly by the size check and the kills are memory-limit OOMs after 117 h of uptime",
+      "misleading_evidence_ids": ["log:inc04:0003", "log:inc04:0012", "past:inc04:0001"]
+    }
+  ]
+}

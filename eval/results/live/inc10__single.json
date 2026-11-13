@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc10",
+  "system": "single",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T07:20:19.960416Z",
+  "report": {
+    "incident_id": "inc10",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "parcelhub-api",
+        "category": "third_party_limit",
+        "summary": "Quote volume rose well above parcelhub-api's 600/min rate limit, so parcelhub returned 429s that shipping-svc turned into 502s. Errors eased when demand dipped below the limit around 12:30 and returned when it climbed back to the cap.",
+        "supporting_ids": [
+          "log:inc10:0003",
+          "log:inc10:0008",
+          "metric:inc10:quotes:0002",
+          "metric:inc10:rpm:0002",
+          "metric:inc10:rpm:0003",
+          "metric:inc10:err:0003",
+          "metric:inc10:rpm:0004",
+          "metric:inc10:err:0004",
+          "log:inc10:0002"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.8,
+        "final_confidence": 0.8
+      },
+      {
+        "id": "H3",
+        "service": "marketing-svc",
+        "category": "capacity",
+        "summary": "The Black Week campaign launched by marketing-svc drove a demand surge (about 2.8x quote volume) beyond shipping's provisioned upstream capacity. This is the trigger behind H1.",
+        "supporting_ids": [
+          "deploy:inc10:0001",
+          "log:inc10:0002",
+          "metric:inc10:quotes:0001",
+          "metric:inc10:quotes:0002"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.45,
+        "final_confidence": 0.45
+      },
+      {
+        "id": "H2",
+        "service": "shipping-svc",
+        "category": "bad_deploy",
+        "summary": "shipping-svc v5.2.0 (carrier selection) caused the quote failures, and the 12:27 rollback briefly helped.",
+        "supporting_ids": [
+          "deploy:inc10:0002",
+          "log:inc10:0001",
+          "log:inc10:0004",
+          "deploy:inc10:0003",
+          "metric:inc10:err:0003"
+        ],
+        "contradicting_ids": [
+          "metric:inc10:err:0004",
+          "log:inc10:0007",
+          "log:inc10:0003",
+          "metric:inc10:rpm:0002"
+        ],
+        "proposed_confidence": 0.1,
+        "final_confidence": 0.1
+      },
+      {
+        "id": "H4",
+        "service": "shipping-svc",
+        "category": "config_change",
+        "summary": "The 12:05 change of log.level to debug degraded shipping-svc.",
+        "supporting_ids": [
+          "config:inc10:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc10:0003",
+          "metric:inc10:err:0002"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "From about 12:01 UTC shipping-svc POST /quotes returns 502 because parcelhub-api POST /v2/rates returns 429 Too Many Requests. The 429 responses report X-RateLimit-Limit 600/min and X-RateLimit-Remaining 0.",
+        "evidence_ids": [
+          "log:inc10:0003",
+          "log:inc10:0005",
+          "log:inc10:0006",
+          "log:inc10:0008",
+          "log:inc10:0010"
+        ]
+      },
+      {
+        "statement": "At 11:50 the shipping-svc error rate was 0.3%, with 365 quote requests/min and 370 parcelhub requests/min.",
+        "evidence_ids": [
+          "metric:inc10:err:0001",
+          "metric:inc10:quotes:0001",
+          "metric:inc10:rpm:0001"
+        ]
+      },
+      {
+        "statement": "At 12:10 the error rate was 41% and quote requests rose to 1010/min. Parcelhub requests were 600/min, exactly the stated rate limit.",
+        "evidence_ids": [
+          "metric:inc10:err:0002",
+          "metric:inc10:quotes:0002",
+          "metric:inc10:rpm:0002",
+          "log:inc10:0003"
+        ]
+      },
+      {
+        "statement": "At 12:30 the error rate was 7.5%, with 580 quote requests/min and 540 parcelhub requests/min, which is below the 600/min limit.",
+        "evidence_ids": [
+          "metric:inc10:err:0003",
+          "metric:inc10:quotes:0003",
+          "metric:inc10:rpm:0003"
+        ]
+      },
+      {
+        "statement": "At 12:45 the error rate was back to 38% and parcelhub requests were again 600/min. By then the rollback to v5.1.4 had already been deployed (12:27) and started (12:28:05).",
+        "evidence_ids": [
+          "metric:inc10:err:0004",
+          "metric:inc10:rpm:0004",
+          "deploy:inc10:0003",
+          "log:inc10:0007"
+        ]
+      },
+      {
+        "statement": "marketing-svc v9.4.1 scheduled the Black Week early-access campaign at 11:20. The campaign email went to 1.2M recipients at 11:58.",
+        "evidence_ids": [
+          "deploy:inc10:0001",
+          "log:inc10:0002"
+        ]
+      },
+      {
+        "statement": "shipping-svc v5.2.0 (carrier selection) was deployed at 11:55 and started at 11:56:20. It logged an unknown carrier code 'PHX' warning at 12:02:30. It was rolled back to v5.1.4 at 12:27.",
+        "evidence_ids": [
+          "deploy:inc10:0002",
+          "log:inc10:0001",
+          "log:inc10:0004",
+          "deploy:inc10:0003"
+        ]
+      },
+      {
+        "statement": "At 12:05 the shipping-svc log.level setting was changed from info to debug.",
+        "evidence_ids": [
+          "config:inc10:0001"
+        ]
+      },
+      {
+        "statement": "shipping-svc depends on parcelhub-api and address-svc. checkout-web calls shipping-svc.",
+        "evidence_ids": [
+          "dependency:inc10:0001",
+          "dependency:inc10:0003",
+          "dependency:inc10:0002"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The quote traffic surge came from customers responding to the 1.2M-recipient campaign email.",
+        "basis": "The email went out at 11:58 and quote volume nearly tripled by 12:10. No traffic-source attribution was found.",
+        "how_to_verify": "Check checkout-web or shipping-svc request referrers and UTM parameters, and campaign click-through timing."
+      },
+      {
+        "statement": "The dip around 12:30 came from traffic briefly falling below the parcelhub limit, not from the rollback. The return at 12:45 means traffic rose again.",
+        "basis": "The 12:30 quote rate (580/min) is below the limit, but no quote_requests_per_min sample exists for 12:45.",
+        "how_to_verify": "Pull minute-level quote_requests_per_min for 12:25-13:00."
+      },
+      {
+        "statement": "There are no matching past incidents. checkout-web metrics returned no data.",
+        "basis": "Both queries returned empty results; coverage may be incomplete.",
+        "how_to_verify": "Query past incidents by tags, and check checkout-web logs directly."
+      },
+      {
+        "statement": "shipping-svc makes about one parcelhub call per quote and does not retry 429s.",
+        "basis": "The baseline ratio of parcelhub requests to quote requests is about 1:1, and parcelhub requests are capped at 600 during errors.",
+        "how_to_verify": "Review the shipping-svc parcelhub client's retry and caching settings."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Contact parcelhub to request an emergency temporary increase of the 600/min rate limit, or a burst allowance, for the duration of the Black Week campaign.",
+        "rationale": "Quote volume is exceeding parcelhub's 600/min cap. Parcelhub returns 429s, which shipping-svc turns into 502s. Raising the cap removes the bottleneck directly, and error rates track demand against the limit, including the easing around 12:30.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Add short-TTL caching of parcelhub quotes in shipping-svc, keyed by origin, destination and parcel profile, so repeat requests during checkout don't each call parcelhub.",
+        "rationale": "Fewer upstream calls keeps volume under the 600/min limit without parcelhub's involvement, and should cut 429-driven failures quickly.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Add client-side rate limiting in shipping-svc toward parcelhub, with jittered retry on 429. When over budget, return a fallback quote (flat-rate or cached estimate) instead of 'shipping unavailable'.",
+        "rationale": "Requests over the limit currently surface as hard failures and customers abandon checkout. A degraded but usable quote limits revenue loss while capacity is constrained.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Verify the mechanism: chart per-minute parcelhub call rate against the count of 429 responses and shipping-svc 502s across 11:30–13:00 UTC, and confirm that errors start each time calls reach about 600/min.",
+        "rationale": "This confirms the top hypothesis before any mitigation is labeled a fix, and gives a baseline to measure the caching and throttling changes against.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Work with marketing to pace or stagger the Black Week campaign (for example, phased email or push sends) until the parcelhub capacity mitigations are in place. Add upstream third-party quota checks to campaign launch readiness.",
+        "rationale": "The campaign roughly 2.8x'd quote volume and is the likely trigger that pushed traffic past parcelhub's limit. Smoothing demand reduces pressure on the cap.",
+        "hypothesis_id": "H3"
+      },
+      {
+        "action": "Do not roll back or redeploy shipping-svc further as a remediation. Confirm that error rates after the 12:27 rollback of v5.2.0 match the demand-versus-limit pattern rather than deploy timing.",
+        "rationale": "The evidence contradicts the bad-deploy theory: errors returned after the rollback and the failures are upstream 429s. More deploy churn would add risk without addressing the cause.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "As low-priority cleanup, revert shipping-svc log.level from debug to its previous level once the incident is stable.",
+        "rationale": "The 12:05 debug change is unlikely to be causal; the evidence contradicts it. Reverting it reduces log volume and noise during heavy traffic at very low risk.",
+        "hypothesis_id": "H4"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 11,
+      "llm_calls": 13,
+      "tokens_in": 49687,
+      "tokens_out": 6513,
+      "cache_tokens": 0,
+      "latency_s": 81.772
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "deploys gap in baseline: partial result: 2 of 4 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "past_incidents gap in baseline: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "parcelhub-api",
+    "expected_category": "third_party_limit",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 54,
+    "grounded": 54,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 5,
+        "rationale": "Every fact matches its cited rows: the 429s with a 600/min limit and Remaining 0 (log:inc10:0003, log:inc10:0008), the metric values at each timestamp (metric:inc10:rpm:0002, metric:inc10:quotes:0002, metric:inc10:err:0003, metric:inc10:err:0004) and the rollback timing (deploy:inc10:0003, log:inc10:0007). The 2.8x figure follows from 1010/365, and no IDs were invented."
+      },
+      "fact_assumption_separation": {
+        "score": 4,
+        "rationale": "Observations are kept as facts. Inferences are stated as assumptions with a basis and a way to verify, such as campaign attribution and the 12:45 traffic rebound with no quote sample. One flaw: the report assumes no matching past incidents, yet rule_adjustments says a later past_incidents query closed that gap, so the claim is weakly reconciled."
+      },
+      "recommended_actions": {
+        "score": 5,
+        "rationale": "The actions are specific and sensible: an emergency parcelhub limit increase, quote caching, client-side throttling with a fallback quote, and pacing the campaign. The report also checks the mechanism before calling anything a fix and explicitly advises against more deploy churn. Retry-on-429 is paired with a budget, which makes it reasonably safe."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The report puts the deploy theory last (H2 at 0.1) and ties the 12:30 dip to traffic falling to 580/min rather than the rollback, noting errors returned to 38% at 12:45 after v5.1.4 started (metric:inc10:err:0004, log:inc10:0007). It never relies on the status page (log:inc10:0009)."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 7816,
+      "tokens_out": 1098,
+      "cache_tokens": 0
+    },
+    "latency_s": 10.887,
+    "judged_at": "2026-11-13T07:30:01.751867Z"
+  }
+}

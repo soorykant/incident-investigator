@@ -1,0 +1,1033 @@
+{
+  "incident_id": "inc05",
+  "incident": {
+    "title": "Mobile app balance screen failing",
+    "symptoms": [
+      "mobile-bff returns HTTP 502 for GET /v2/balance since 00:00 UTC",
+      "Nightly settlement batch reported failures shortly after midnight",
+      "Login and browsing in the mobile app still work"
+    ],
+    "affected_service": "mobile-bff",
+    "window_start": "2026-11-13T23:00:00Z",
+    "window_end": "2026-11-14T00:45:00Z",
+    "severity": "SEV1"
+  },
+  "started_at": "2026-11-13T06:54:12.149851Z",
+  "tasks": [
+    {
+      "id": "t1",
+      "agent": "observability",
+      "goal": "Examine mobile-bff logs and metrics for GET /v2/balance from 23:00 to 00:45 UTC. Find out when the 502s began, which upstream call fails and how (timeouts, connection refused, error responses), and whether other endpoints such as login are unaffected.",
+      "params": {
+        "service": "mobile-bff",
+        "endpoint": "GET /v2/balance",
+        "window_start": "2026-11-13T23:00:00Z",
+        "window_end": "2026-11-14T00:45:00Z"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t2",
+      "agent": "observability",
+      "goal": "Examine the nightly settlement batch's logs and error messages from shortly after midnight. List all deploys, config changes, credential or certificate rotations and scheduled jobs around 00:00 UTC that touch the balance or ledger backends.",
+      "params": {
+        "service": "settlement-batch",
+        "window_start": "2026-11-13T23:00:00Z",
+        "window_end": "2026-11-14T00:45:00Z",
+        "focus": "changes and scheduled events near 00:00 UTC"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t3",
+      "agent": "dependency",
+      "goal": "Map the downstream dependencies of mobile-bff's balance path and of the settlement batch. Find shared components, such as a balance or ledger service, a database or a secrets/cert provider, that login and browsing do not use. Look for past incidents involving midnight or date-rollover failures in these components.",
+      "params": {
+        "service": "mobile-bff",
+        "related_services": [
+          "settlement-batch"
+        ],
+        "path": "GET /v2/balance"
+      },
+      "depends_on": [],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    },
+    {
+      "id": "t4",
+      "agent": "reasoning",
+      "goal": "Build competing root-cause hypotheses for the /v2/balance 502s and the concurrent settlement batch failures, using t1-t3. Weigh a shared downstream failure against a midnight-triggered change (date rollover, expiry, batch locking or overloading a shared store). Rank the hypotheses with supporting and contradicting evidence.",
+      "params": {
+        "service": "mobile-bff"
+      },
+      "depends_on": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "status": "done",
+      "origin": "plan",
+      "loop": 0
+    }
+  ],
+  "findings": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "The first GET /v2/balance 502 in the window is logged at 2026-11-14T00:00:04Z. The error is 'call to ledger-api failed: x509: certificate has expired or is not yet valid', with the current time stated as after 2026-11-14T00:00:00Z.",
+          "evidence_ids": [
+            "log:inc05:0005"
+          ]
+        },
+        {
+          "statement": "GET /v2/balance returned 200 at 23:45:10Z (95ms) and 23:58:30Z (101ms), so the balance path was healthy until just after midnight UTC.",
+          "evidence_ids": [
+            "log:inc05:0003",
+            "log:inc05:0004"
+          ]
+        },
+        {
+          "statement": "At 00:00:30Z, netkit logged a TLS handshake failure toward the upstream and retried with a fresh connection (attempt 2/2). This is consistent with the upstream certificate being rejected during handshake.",
+          "evidence_ids": [
+            "log:inc05:0006"
+          ]
+        },
+        {
+          "statement": "A second balance 502 at 00:02:45Z shows the same ledger-api x509 certificate failure, so the failure persisted after the first occurrence.",
+          "evidence_ids": [
+            "log:inc05:0008"
+          ]
+        },
+        {
+          "statement": "All ERROR-level logs for mobile-bff in the window are the ledger-api x509 certificate failures on GET /v2/balance. No timeout or connection-refused errors appear in the returned logs.",
+          "evidence_ids": [
+            "log:inc05:0005",
+            "log:inc05:0008"
+          ]
+        },
+        {
+          "statement": "A non-balance endpoint, GET /v2/profile, returned 200 in 60ms via accounts-api at 00:03:10Z, after the balance failures began. This shows the failure is not global across all upstreams in mobile-bff.",
+          "evidence_ids": [
+            "log:inc05:0009"
+          ]
+        },
+        {
+          "statement": "An INFO log at 23:31:02Z records 'Applied setting http.tls_min_version=1.3' on mobile-bff, about 29 minutes before the first 502.",
+          "evidence_ids": [
+            "log:inc05:0002"
+          ]
+        },
+        {
+          "statement": "The only metric row returned shows error_rate_pct at 0.2 at 23:55:00Z, before the 502s began. The metrics result is partial: 1 of 2 rows is missing.",
+          "evidence_ids": [
+            "metric:inc05:err:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The root cause is an expired (or not-yet-valid) TLS certificate presented by ledger-api, and the window start of 00:00:00Z matches its validity boundary.",
+          "basis": "The error text names x509 expiry and gives a cutoff of 2026-11-14T00:00:00Z, which lines up with the first failure at 00:00:04Z.",
+          "how_to_verify": "Inspect the ledger-api server certificate's notAfter/notBefore fields and the certificate rotation or renewal history for ledger-api."
+        },
+        {
+          "statement": "The http.tls_min_version=1.3 setting applied at 23:31 is probably not the cause, since the error reports certificate validity rather than protocol version. It may still be a contributing factor if the client now rejects the upstream's TLS configuration.",
+          "basis": "The error message is x509 validity, not a protocol-version mismatch. The config change predates the failures by about 29 minutes and the balance calls succeeded at 23:45 and 23:58 after it.",
+          "how_to_verify": "Check the change's scope and whether it applies to the ledger-api client; test ledger-api with TLS 1.3 minimum against the expired-cert case, or roll back the setting in staging and compare handshake behavior."
+        },
+        {
+          "statement": "Login is unaffected, but this is inferred from /v2/profile returning 200 rather than from a direct login endpoint check. No logs or metrics for the login endpoint were retrieved.",
+          "basis": "The task asked about login, and the only corroborating evidence is the 200 on /v2/profile at 00:03:10Z via accounts-api.",
+          "how_to_verify": "Query mobile-bff logs and metrics for the login endpoint over 23:00 to 00:45 UTC and confirm its status codes."
+        },
+        {
+          "statement": "The error-rate picture is incomplete. The metrics result is partial, with 1 of 2 rows missing, so the post-midnight error-rate change and the 502 volume are not confirmed by metrics.",
+          "basis": "The metrics tool returned status 'partial' with a gap entry (gap:1) for one missing row.",
+          "how_to_verify": "Re-query metrics for mobile-bff (for example error_rate_pct and 5xx count) for the window, or query each metric name separately."
+        },
+        {
+          "statement": "The ledger-api service side has not been examined. Its own logs and certificate state are unknown from this investigation.",
+          "basis": "Only mobile-bff logs and metrics were queried. The dependency edge from mobile-bff to ledger-api has not been checked.",
+          "how_to_verify": "Query ledger-api logs, its TLS termination or certificate metrics, and deploy/config changes for the window, and check the dependency graph for other callers of ledger-api."
+        },
+        {
+          "statement": "The nightly settlement batch failures are not explained by this evidence. Its link to the balance 502s, which may share the ledger-api dependency, is unverified.",
+          "basis": "The incident symptoms mention settlement failures shortly after midnight, but no logs for the settlement service were retrieved.",
+          "how_to_verify": "Pull the settlement service's logs for 23:55 to 00:15 UTC and check whether it calls ledger-api with the same certificate."
+        }
+      ]
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "facts": [
+        {
+          "statement": "batch-settlement logged an ERROR at 00:01:12Z: a POST to ledger-api.internal/v1/settle failed with 'certificate verify failed: certificate has expired'.",
+          "evidence_ids": [
+            "log:inc05:0007"
+          ]
+        },
+        {
+          "statement": "batch-settlement logged an ERROR at 00:10:20Z that settlement run 20261114 was aborted after 3 failed calls to ledger-api.",
+          "evidence_ids": [
+            "log:inc05:0012"
+          ]
+        },
+        {
+          "statement": "At 23:05:00Z, ledger-api logged a WARN that cert-renewer skipped renewal of secret ledger-api-tls because a lock was held by job renew-20261106, which it described as stale.",
+          "evidence_ids": [
+            "log:inc05:0011"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The expired certificate is the ledger-api-tls secret, which the cert-renewer skipped renewing.",
+          "basis": "The 23:05Z skipped-renewal WARN names ledger-api-tls and the batch failure at 00:01Z is a certificate-expired error on the ledger-api TLS endpoint, but no log ties the expired cert to that secret by name.",
+          "how_to_verify": "Inspect the certificate served by ledger-api.internal and its expiry date, and confirm the secret it was issued from is ledger-api-tls."
+        },
+        {
+          "statement": "The stale lock held by renew-20261106 is why the certificate was not renewed before expiry.",
+          "basis": "The WARN at 23:05Z states the renewal was skipped due to that lock, and the renewal job is named with a date from 2026-11-06.",
+          "how_to_verify": "Check the cert-renewer job history and lock table for renew-20261106 and confirm whether it was still running or had crashed."
+        },
+        {
+          "statement": "The 502s on mobile-bff GET /v2/balance are caused by the same ledger-api TLS failure.",
+          "basis": "Timing aligns (502s since 00:00Z, settlement TLS failures at 00:01Z), but mobile-bff logs and its dependency path to ledger-api were not queried in this task.",
+          "how_to_verify": "Query mobile-bff ERROR logs for 502 causes and check its downstream edges and calls to ledger-api or accounts-api in the same window."
+        },
+        {
+          "statement": "No relevant deploys or config changes occurred for the balance or ledger backends around 00:00Z.",
+          "basis": "The ledger-api deploys query returned no entries, but the all-services deploys query failed (gap:2) and deploys for accounts-api, ledger-db, mobile-bff, and batch-settlement were never queried.",
+          "how_to_verify": "Retry the all-services deploys query, or query deploys individually for accounts-api, ledger-db, mobile-bff, and batch-settlement over the same window."
+        },
+        {
+          "statement": "The scheduled-job list is incomplete: renew-20261106 is the only scheduled or cert-related job identified.",
+          "basis": "Only the cert-renewer WARN surfaced a job; no scheduler or cron records were queried, and the task asked for all scheduled jobs near 00:00Z.",
+          "how_to_verify": "Query the scheduler or job registry for jobs touching ledger-api, ledger-db, accounts-api, and batch-settlement between 23:00Z and 00:45Z."
+        },
+        {
+          "statement": "Credential and certificate rotation events for the ledger-api-tls secret are not fully known.",
+          "basis": "Only one cert-renewer WARN was returned; no rotation history or secret-store audit records were queried.",
+          "how_to_verify": "Pull the secret-store audit log and certificate issuance history for ledger-api-tls to find the last successful rotation and the actual expiry timestamp."
+        },
+        {
+          "statement": "A deploys query for ledger-api over 23:00Z to 00:45Z returned status ok with no entries.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        },
+        {
+          "statement": "A deploys query across all services over the same window failed with a tool backend error (gap:2), so no deploy or config-change list is available for any service from that query.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        },
+        {
+          "statement": "An ERROR-level log query for ledger-api over 23:00Z to 00:45Z returned no entries.",
+          "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+          "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+        }
+      ]
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "facts": [
+        {
+          "statement": "mobile-bff has two recorded downstream dependencies: ledger-api and accounts-api.",
+          "evidence_ids": [
+            "dependency:inc05:0001",
+            "dependency:inc05:0002"
+          ]
+        },
+        {
+          "statement": "ledger-api depends on ledger-db.",
+          "evidence_ids": [
+            "dependency:inc05:0004"
+          ]
+        },
+        {
+          "statement": "batch-settlement depends on ledger-api.",
+          "evidence_ids": [
+            "dependency:inc05:0003"
+          ]
+        },
+        {
+          "statement": "ledger-api is a shared component: it sits downstream of both mobile-bff and batch-settlement, so it is a candidate common point for the balance 502s and the settlement failures.",
+          "evidence_ids": [
+            "dependency:inc05:0001",
+            "dependency:inc05:0003"
+          ]
+        },
+        {
+          "statement": "ledger-db is the only recorded database dependency on the balance path, reached through ledger-api.",
+          "evidence_ids": [
+            "dependency:inc05:0004"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The GET /v2/balance path calls ledger-api, not only accounts-api.",
+          "basis": "The dependency graph records a mobile-bff to ledger-api edge, but it is service-level and not per-route.",
+          "how_to_verify": "Check mobile-bff traces or route-level logs for /v2/balance to confirm which upstream calls it makes and which returns the 502."
+        },
+        {
+          "statement": "Login and browsing do not use ledger-api or ledger-db.",
+          "basis": "The graph has no per-endpoint data, and the symptoms say login and browsing still work. This is inferred, not shown.",
+          "how_to_verify": "Query dependencies for mobile-bff at endpoint level, or check logs for login and browse routes to see which upstreams they call."
+        },
+        {
+          "statement": "'settlement-batch' in the report refers to the service named 'batch-settlement'.",
+          "basis": "The dependencies tool rejected 'settlement-batch' and listed 'batch-settlement' among the known services. That error response has no evidence ID, so this is not a cited fact.",
+          "how_to_verify": "Confirm the service name with the settlement team and check that batch-settlement is the job that reported failures."
+        },
+        {
+          "statement": "No past incident involves midnight or date-rollover failures in ledger-api, ledger-db, or the balance path.",
+          "basis": "The past_incidents search with midnight, date rollover, ledger, balance, and settlement keywords returned no results. Keyword search may be too narrow.",
+          "how_to_verify": "Search past incidents by tags for ledger-db, ledger-api, and date-related failures, and widen the keywords."
+        },
+        {
+          "statement": "accounts-api has no recorded downstream dependencies, and no secrets, cert, or other shared infrastructure provider appears in the graph.",
+          "basis": "The dependencies query for accounts-api returned an empty evidence list. The graph may be incomplete, and no query was run for ledger-db, which may have its own dependencies.",
+          "how_to_verify": "Query dependencies for ledger-db (downstream) and check the service catalog for secrets, cert, or time-related dependencies that could fail at midnight."
+        },
+        {
+          "statement": "No metrics, logs, or deploys were checked, so the dependency graph alone does not show a fault in ledger-api or ledger-db.",
+          "basis": "Only the dependencies and past_incidents tools were used in this task.",
+          "how_to_verify": "Pull ledger-api and ledger-db error logs and 5xx metrics for 2026-11-13T23:00Z to 2026-11-14T00:45Z, and check deploys or config changes for those services in the same window."
+        }
+      ]
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "facts": [],
+      "assumptions": [
+        {
+          "statement": "The expired certificate served by ledger-api.internal is the one issued from the ledger-api-tls secret. Its notAfter is 2026-11-14T00:00:00Z.",
+          "basis": "The 23:05Z WARN names ledger-api-tls as skipped for renewal, and both callers report cert expiry right after midnight. No log ties the expired cert to that secret by name.",
+          "how_to_verify": "Inspect the served certificate's notAfter and issuer, and compare it with the ledger-api-tls secret contents."
+        },
+        {
+          "statement": "The renew-20261106 lock was stale (crashed job), so cert-renewer never renewed the certificate before expiry.",
+          "basis": "The cert-renewer WARN in log:inc05:0011 describes the lock as stale and held by a job dated 2026-11-06.",
+          "how_to_verify": "Check cert-renewer job history and the lock table for renew-20261106. Then clear the lock and confirm renewal succeeds."
+        },
+        {
+          "statement": "GET /v2/balance calls ledger-api, and /v2/profile and login use accounts-api only.",
+          "basis": "Error text in log:inc05:0005 names ledger-api, and log:inc05:0009 shows profile served via accounts-api. The dependency graph is service-level, not per-route.",
+          "how_to_verify": "Check route-level traces for /v2/balance, login, and profile."
+        },
+        {
+          "statement": "No relevant deploy to ledger-api or ledger-db caused the failure.",
+          "basis": "The ledger-api deploy query reportedly returned empty, but that result is uncited. The all-services deploy query failed (gap:2).",
+          "how_to_verify": "Re-run the deploys query for ledger-api, ledger-db, mobile-bff, and batch-settlement over 23:00Z-00:45Z."
+        },
+        {
+          "statement": "Post-midnight error volume on mobile-bff matches the 502 reports.",
+          "basis": "The metrics result is partial (gap:1). Only the pre-midnight 0.2% error rate is available.",
+          "how_to_verify": "Re-query error_rate_pct and the 5xx count for mobile-bff after 00:00Z."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "log:inc05:0005",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:00:04Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "ERROR",
+        "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid: current time 2026-11-14T00:00:04Z is after 2026-11-14T00:00:00Z"
+      }
+    },
+    {
+      "id": "log:inc05:0008",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:02:45Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "ERROR",
+        "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid"
+      }
+    },
+    {
+      "id": "metric:inc05:err:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-13T23:55:00Z",
+      "payload": {
+        "service": "mobile-bff",
+        "name": "error_rate_pct",
+        "value": 0.2
+      }
+    },
+    {
+      "id": "log:inc05:0002",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:31:02Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "Applied setting http.tls_min_version=1.3"
+      }
+    },
+    {
+      "id": "log:inc05:0003",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:45:10Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "GET /v2/balance 200 in 95ms"
+      }
+    },
+    {
+      "id": "log:inc05:0004",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:58:30Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "GET /v2/balance 200 in 101ms"
+      }
+    },
+    {
+      "id": "log:inc05:0006",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:00:30Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "WARN",
+        "message": "netkit: handshake failed, retrying with fresh connection (attempt 2/2)"
+      }
+    },
+    {
+      "id": "log:inc05:0009",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:03:10Z",
+      "payload": {
+        "service": "mobile-bff",
+        "level": "INFO",
+        "message": "GET /v2/profile 200 in 60ms (accounts-api)"
+      }
+    },
+    {
+      "id": "log:inc05:0007",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:01:12Z",
+      "payload": {
+        "service": "batch-settlement",
+        "level": "ERROR",
+        "message": "POST https://ledger-api.internal/v1/settle failed: certificate verify failed: certificate has expired"
+      }
+    },
+    {
+      "id": "log:inc05:0012",
+      "kind": "log",
+      "timestamp": "2026-11-14T00:10:20Z",
+      "payload": {
+        "service": "batch-settlement",
+        "level": "ERROR",
+        "message": "Settlement run 20261114 aborted after 3 failed calls to ledger-api"
+      }
+    },
+    {
+      "id": "log:inc05:0011",
+      "kind": "log",
+      "timestamp": "2026-11-13T23:05:00Z",
+      "payload": {
+        "service": "ledger-api",
+        "level": "WARN",
+        "message": "cert-renewer: renewal of secret ledger-api-tls skipped: lock held by job renew-20261106 (stale)"
+      }
+    },
+    {
+      "id": "dependency:inc05:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "mobile-bff",
+        "depends_on": "ledger-api"
+      }
+    },
+    {
+      "id": "dependency:inc05:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "mobile-bff",
+        "depends_on": "accounts-api"
+      }
+    },
+    {
+      "id": "dependency:inc05:0004",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "ledger-api",
+        "depends_on": "ledger-db"
+      }
+    },
+    {
+      "id": "dependency:inc05:0003",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "batch-settlement",
+        "depends_on": "ledger-api"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "h1",
+      "service": "ledger-api",
+      "category": "cert_dns",
+      "summary": "The ledger-api TLS certificate (likely the ledger-api-tls secret) expired at 2026-11-14T00:00:00Z. The likely reason is that cert-renewer skipped renewal because a stale lock was still held by job renew-20261106. ledger-api is the shared downstream of both mobile-bff and batch-settlement. Both callers fail TLS verification right after midnight, which explains both the /v2/balance 502s and the aborted settlement run. Paths that go through accounts-api, such as /v2/profile, are unaffected.",
+      "supporting_ids": [
+        "log:inc05:0005",
+        "log:inc05:0008",
+        "log:inc05:0006",
+        "log:inc05:0007",
+        "log:inc05:0012",
+        "log:inc05:0011",
+        "log:inc05:0003",
+        "log:inc05:0004",
+        "log:inc05:0009",
+        "dependency:inc05:0001",
+        "dependency:inc05:0003"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.85,
+      "final_confidence": 0.75
+    },
+    {
+      "id": "h2",
+      "service": "mobile-bff",
+      "category": "config_change",
+      "summary": "The mobile-bff setting http.tls_min_version=1.3, applied at 23:31:02Z, broke TLS handshakes from mobile-bff to ledger-api. That would cause the balance 502s, and the settlement failures would be a separate coincidence.",
+      "supporting_ids": [
+        "log:inc05:0002",
+        "log:inc05:0006"
+      ],
+      "contradicting_ids": [
+        "log:inc05:0003",
+        "log:inc05:0004",
+        "log:inc05:0005",
+        "log:inc05:0007",
+        "log:inc05:0009"
+      ],
+      "proposed_confidence": 0.07,
+      "final_confidence": 0.0
+    },
+    {
+      "id": "h3",
+      "service": "ledger-db",
+      "category": "capacity",
+      "summary": "A midnight-triggered load on the shared store behind ledger-api, such as the nightly settlement batch overloading or locking ledger-db, caused both the balance failures and the settlement failures.",
+      "supporting_ids": [
+        "dependency:inc05:0004",
+        "dependency:inc05:0003",
+        "log:inc05:0012"
+      ],
+      "contradicting_ids": [
+        "log:inc05:0005",
+        "log:inc05:0007",
+        "log:inc05:0008"
+      ],
+      "proposed_confidence": 0.04,
+      "final_confidence": 0.0
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "metrics",
+      "reason": "partial result: 1 of 2 rows missing",
+      "service": "mobile-bff",
+      "affects_hypotheses": [],
+      "task_id": "t1"
+    },
+    {
+      "id": "gap:2",
+      "tool": "deploys",
+      "reason": "tool backend error",
+      "service": null,
+      "affects_hypotheses": [],
+      "task_id": "t2"
+    }
+  ],
+  "closed_gaps": [],
+  "failures": [],
+  "counters": {
+    "tool_calls": 15,
+    "llm_calls": 22,
+    "tokens_in": 49511,
+    "tokens_out": 15392,
+    "cache_tokens": 0,
+    "llm_latency_s": 102.074
+  },
+  "trace": [
+    {
+      "task_id": "t1",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:54:21.313183Z",
+      "ended_at": "2026-11-13T06:54:40.417005Z",
+      "status": "done",
+      "tool_calls": 3,
+      "llm_calls": 4
+    },
+    {
+      "task_id": "t2",
+      "agent": "observability",
+      "wave": 0,
+      "started_at": "2026-11-13T06:54:21.316868Z",
+      "ended_at": "2026-11-13T06:54:56.044955Z",
+      "status": "done",
+      "tool_calls": 6,
+      "llm_calls": 7
+    },
+    {
+      "task_id": "t3",
+      "agent": "dependency",
+      "wave": 0,
+      "started_at": "2026-11-13T06:54:21.318387Z",
+      "ended_at": "2026-11-13T06:54:54.694019Z",
+      "status": "done",
+      "tool_calls": 6,
+      "llm_calls": 7
+    },
+    {
+      "task_id": "t4",
+      "agent": "reasoning",
+      "wave": 1,
+      "started_at": "2026-11-13T06:54:56.046715Z",
+      "ended_at": "2026-11-13T06:55:11.386030Z",
+      "status": "done",
+      "tool_calls": 0,
+      "llm_calls": 1
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [
+    {
+      "loop": 1,
+      "critique": "h1 is well supported, and no competing explanation survives.\n\n**Support for h1:**\n- Two independent callers of ledger-api fail with x509 'certificate has expired' errors right after the 00:00:00Z boundary: mobile-bff at 00:00:04Z and 00:02:45Z (log:inc05:0005, 0008), and batch-settlement at 00:01:12Z (log:inc05:0007).\n- Balance calls succeeded at 23:45 and 23:58 (log:inc05:0003, 0004).\n- A non-ledger path (/v2/profile via accounts-api) is still healthy after midnight (log:inc05:0009).\n- A cert-renewer WARN at 23:05Z names ledger-api-tls as skipped because of a stale lock (log:inc05:0011).\n\n**Why h2 is ruled out:**\n- The tls_min_version change at 23:31 was followed by successful balance calls.\n- The error is certificate validity, not protocol version.\n- h2 cannot explain batch-settlement failing with the same error.\n\n**Why h3 is ruled out:**\n- There are no timeout, lock or latency errors.\n- Every failure is a TLS verification error raised before any request reaches ledger-db.\n\n**Remaining gaps, which do not change the ranking:**\n- **gap:2 (deploys tool failure):** it could hide a ledger-api deploy or secret swap. Even then the mechanism is still an expired or invalid ledger-api certificate, so the top hypothesis stands.\n- **gap:1 (partial metrics):** it only affects how big the impact looks, not the cause.\n- **Two links in h1 are inferred, not shown by any log:**\n  - that the expired cert is the one from the ledger-api-tls secret;\n  - that the stale lock is why renewal was missed.\n\n  Both should be confirmed during remediation: inspect the served cert's notAfter and the cert-renewer lock table. Our tools cannot settle either more cheaply.\n\nThe 0.75 final confidence is reasonable. Given the remaining budget, more loops are not justified.",
+      "follow_ups": []
+    }
+  ],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc05",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "ledger-api",
+        "category": "cert_dns",
+        "summary": "The ledger-api TLS certificate (likely the ledger-api-tls secret) expired at 2026-11-14T00:00:00Z. The likely reason is that cert-renewer skipped renewal because a stale lock was still held by job renew-20261106. ledger-api is the shared downstream of both mobile-bff and batch-settlement. Both callers fail TLS verification right after midnight, which explains both the /v2/balance 502s and the aborted settlement run. Paths that go through accounts-api, such as /v2/profile, are unaffected.",
+        "supporting_ids": [
+          "log:inc05:0005",
+          "log:inc05:0008",
+          "log:inc05:0006",
+          "log:inc05:0007",
+          "log:inc05:0012",
+          "log:inc05:0011",
+          "log:inc05:0003",
+          "log:inc05:0004",
+          "log:inc05:0009",
+          "dependency:inc05:0001",
+          "dependency:inc05:0003"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.85,
+        "final_confidence": 0.75
+      },
+      {
+        "id": "h2",
+        "service": "mobile-bff",
+        "category": "config_change",
+        "summary": "The mobile-bff setting http.tls_min_version=1.3, applied at 23:31:02Z, broke TLS handshakes from mobile-bff to ledger-api. That would cause the balance 502s, and the settlement failures would be a separate coincidence.",
+        "supporting_ids": [
+          "log:inc05:0002",
+          "log:inc05:0006"
+        ],
+        "contradicting_ids": [
+          "log:inc05:0003",
+          "log:inc05:0004",
+          "log:inc05:0005",
+          "log:inc05:0007",
+          "log:inc05:0009"
+        ],
+        "proposed_confidence": 0.07,
+        "final_confidence": 0.0
+      },
+      {
+        "id": "h3",
+        "service": "ledger-db",
+        "category": "capacity",
+        "summary": "A midnight-triggered load on the shared store behind ledger-api, such as the nightly settlement batch overloading or locking ledger-db, caused both the balance failures and the settlement failures.",
+        "supporting_ids": [
+          "dependency:inc05:0004",
+          "dependency:inc05:0003",
+          "log:inc05:0012"
+        ],
+        "contradicting_ids": [
+          "log:inc05:0005",
+          "log:inc05:0007",
+          "log:inc05:0008"
+        ],
+        "proposed_confidence": 0.04,
+        "final_confidence": 0.0
+      }
+    ],
+    "facts": [
+      {
+        "statement": "The first GET /v2/balance 502 in the window is logged at 2026-11-14T00:00:04Z. The error is 'call to ledger-api failed: x509: certificate has expired or is not yet valid', with the current time stated as after 2026-11-14T00:00:00Z.",
+        "evidence_ids": [
+          "log:inc05:0005"
+        ]
+      },
+      {
+        "statement": "GET /v2/balance returned 200 at 23:45:10Z (95ms) and 23:58:30Z (101ms), so the balance path was healthy until just after midnight UTC.",
+        "evidence_ids": [
+          "log:inc05:0003",
+          "log:inc05:0004"
+        ]
+      },
+      {
+        "statement": "At 00:00:30Z, netkit logged a TLS handshake failure toward the upstream and retried with a fresh connection (attempt 2/2). This is consistent with the upstream certificate being rejected during handshake.",
+        "evidence_ids": [
+          "log:inc05:0006"
+        ]
+      },
+      {
+        "statement": "A second balance 502 at 00:02:45Z shows the same ledger-api x509 certificate failure, so the failure persisted after the first occurrence.",
+        "evidence_ids": [
+          "log:inc05:0008"
+        ]
+      },
+      {
+        "statement": "All ERROR-level logs for mobile-bff in the window are the ledger-api x509 certificate failures on GET /v2/balance. No timeout or connection-refused errors appear in the returned logs.",
+        "evidence_ids": [
+          "log:inc05:0005",
+          "log:inc05:0008"
+        ]
+      },
+      {
+        "statement": "A non-balance endpoint, GET /v2/profile, returned 200 in 60ms via accounts-api at 00:03:10Z, after the balance failures began. This shows the failure is not global across all upstreams in mobile-bff.",
+        "evidence_ids": [
+          "log:inc05:0009"
+        ]
+      },
+      {
+        "statement": "An INFO log at 23:31:02Z records 'Applied setting http.tls_min_version=1.3' on mobile-bff, about 29 minutes before the first 502.",
+        "evidence_ids": [
+          "log:inc05:0002"
+        ]
+      },
+      {
+        "statement": "The only metric row returned shows error_rate_pct at 0.2 at 23:55:00Z, before the 502s began. The metrics result is partial: 1 of 2 rows is missing.",
+        "evidence_ids": [
+          "metric:inc05:err:0001"
+        ]
+      },
+      {
+        "statement": "batch-settlement logged an ERROR at 00:01:12Z: a POST to ledger-api.internal/v1/settle failed with 'certificate verify failed: certificate has expired'.",
+        "evidence_ids": [
+          "log:inc05:0007"
+        ]
+      },
+      {
+        "statement": "batch-settlement logged an ERROR at 00:10:20Z that settlement run 20261114 was aborted after 3 failed calls to ledger-api.",
+        "evidence_ids": [
+          "log:inc05:0012"
+        ]
+      },
+      {
+        "statement": "At 23:05:00Z, ledger-api logged a WARN that cert-renewer skipped renewal of secret ledger-api-tls because a lock was held by job renew-20261106, which it described as stale.",
+        "evidence_ids": [
+          "log:inc05:0011"
+        ]
+      },
+      {
+        "statement": "mobile-bff has two recorded downstream dependencies: ledger-api and accounts-api.",
+        "evidence_ids": [
+          "dependency:inc05:0001",
+          "dependency:inc05:0002"
+        ]
+      },
+      {
+        "statement": "ledger-api depends on ledger-db.",
+        "evidence_ids": [
+          "dependency:inc05:0004"
+        ]
+      },
+      {
+        "statement": "batch-settlement depends on ledger-api.",
+        "evidence_ids": [
+          "dependency:inc05:0003"
+        ]
+      },
+      {
+        "statement": "ledger-api is a shared component: it sits downstream of both mobile-bff and batch-settlement, so it is a candidate common point for the balance 502s and the settlement failures.",
+        "evidence_ids": [
+          "dependency:inc05:0001",
+          "dependency:inc05:0003"
+        ]
+      },
+      {
+        "statement": "ledger-db is the only recorded database dependency on the balance path, reached through ledger-api.",
+        "evidence_ids": [
+          "dependency:inc05:0004"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The root cause is an expired (or not-yet-valid) TLS certificate presented by ledger-api, and the window start of 00:00:00Z matches its validity boundary.",
+        "basis": "The error text names x509 expiry and gives a cutoff of 2026-11-14T00:00:00Z, which lines up with the first failure at 00:00:04Z.",
+        "how_to_verify": "Inspect the ledger-api server certificate's notAfter/notBefore fields and the certificate rotation or renewal history for ledger-api."
+      },
+      {
+        "statement": "The http.tls_min_version=1.3 setting applied at 23:31 is probably not the cause, since the error reports certificate validity rather than protocol version. It may still be a contributing factor if the client now rejects the upstream's TLS configuration.",
+        "basis": "The error message is x509 validity, not a protocol-version mismatch. The config change predates the failures by about 29 minutes and the balance calls succeeded at 23:45 and 23:58 after it.",
+        "how_to_verify": "Check the change's scope and whether it applies to the ledger-api client; test ledger-api with TLS 1.3 minimum against the expired-cert case, or roll back the setting in staging and compare handshake behavior."
+      },
+      {
+        "statement": "Login is unaffected, but this is inferred from /v2/profile returning 200 rather than from a direct login endpoint check. No logs or metrics for the login endpoint were retrieved.",
+        "basis": "The task asked about login, and the only corroborating evidence is the 200 on /v2/profile at 00:03:10Z via accounts-api.",
+        "how_to_verify": "Query mobile-bff logs and metrics for the login endpoint over 23:00 to 00:45 UTC and confirm its status codes."
+      },
+      {
+        "statement": "The error-rate picture is incomplete. The metrics result is partial, with 1 of 2 rows missing, so the post-midnight error-rate change and the 502 volume are not confirmed by metrics.",
+        "basis": "The metrics tool returned status 'partial' with a gap entry (gap:1) for one missing row.",
+        "how_to_verify": "Re-query metrics for mobile-bff (for example error_rate_pct and 5xx count) for the window, or query each metric name separately."
+      },
+      {
+        "statement": "The ledger-api service side has not been examined. Its own logs and certificate state are unknown from this investigation.",
+        "basis": "Only mobile-bff logs and metrics were queried. The dependency edge from mobile-bff to ledger-api has not been checked.",
+        "how_to_verify": "Query ledger-api logs, its TLS termination or certificate metrics, and deploy/config changes for the window, and check the dependency graph for other callers of ledger-api."
+      },
+      {
+        "statement": "The nightly settlement batch failures are not explained by this evidence. Its link to the balance 502s, which may share the ledger-api dependency, is unverified.",
+        "basis": "The incident symptoms mention settlement failures shortly after midnight, but no logs for the settlement service were retrieved.",
+        "how_to_verify": "Pull the settlement service's logs for 23:55 to 00:15 UTC and check whether it calls ledger-api with the same certificate."
+      },
+      {
+        "statement": "The expired certificate is the ledger-api-tls secret, which the cert-renewer skipped renewing.",
+        "basis": "The 23:05Z skipped-renewal WARN names ledger-api-tls and the batch failure at 00:01Z is a certificate-expired error on the ledger-api TLS endpoint, but no log ties the expired cert to that secret by name.",
+        "how_to_verify": "Inspect the certificate served by ledger-api.internal and its expiry date, and confirm the secret it was issued from is ledger-api-tls."
+      },
+      {
+        "statement": "The stale lock held by renew-20261106 is why the certificate was not renewed before expiry.",
+        "basis": "The WARN at 23:05Z states the renewal was skipped due to that lock, and the renewal job is named with a date from 2026-11-06.",
+        "how_to_verify": "Check the cert-renewer job history and lock table for renew-20261106 and confirm whether it was still running or had crashed."
+      },
+      {
+        "statement": "The 502s on mobile-bff GET /v2/balance are caused by the same ledger-api TLS failure.",
+        "basis": "Timing aligns (502s since 00:00Z, settlement TLS failures at 00:01Z), but mobile-bff logs and its dependency path to ledger-api were not queried in this task.",
+        "how_to_verify": "Query mobile-bff ERROR logs for 502 causes and check its downstream edges and calls to ledger-api or accounts-api in the same window."
+      },
+      {
+        "statement": "No relevant deploys or config changes occurred for the balance or ledger backends around 00:00Z.",
+        "basis": "The ledger-api deploys query returned no entries, but the all-services deploys query failed (gap:2) and deploys for accounts-api, ledger-db, mobile-bff, and batch-settlement were never queried.",
+        "how_to_verify": "Retry the all-services deploys query, or query deploys individually for accounts-api, ledger-db, mobile-bff, and batch-settlement over the same window."
+      },
+      {
+        "statement": "The scheduled-job list is incomplete: renew-20261106 is the only scheduled or cert-related job identified.",
+        "basis": "Only the cert-renewer WARN surfaced a job; no scheduler or cron records were queried, and the task asked for all scheduled jobs near 00:00Z.",
+        "how_to_verify": "Query the scheduler or job registry for jobs touching ledger-api, ledger-db, accounts-api, and batch-settlement between 23:00Z and 00:45Z."
+      },
+      {
+        "statement": "Credential and certificate rotation events for the ledger-api-tls secret are not fully known.",
+        "basis": "Only one cert-renewer WARN was returned; no rotation history or secret-store audit records were queried.",
+        "how_to_verify": "Pull the secret-store audit log and certificate issuance history for ledger-api-tls to find the last successful rotation and the actual expiry timestamp."
+      },
+      {
+        "statement": "A deploys query for ledger-api over 23:00Z to 00:45Z returned status ok with no entries.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "A deploys query across all services over the same window failed with a tool backend error (gap:2), so no deploy or config-change list is available for any service from that query.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "An ERROR-level log query for ledger-api over 23:00Z to 00:45Z returned no entries.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The GET /v2/balance path calls ledger-api, not only accounts-api.",
+        "basis": "The dependency graph records a mobile-bff to ledger-api edge, but it is service-level and not per-route.",
+        "how_to_verify": "Check mobile-bff traces or route-level logs for /v2/balance to confirm which upstream calls it makes and which returns the 502."
+      },
+      {
+        "statement": "Login and browsing do not use ledger-api or ledger-db.",
+        "basis": "The graph has no per-endpoint data, and the symptoms say login and browsing still work. This is inferred, not shown.",
+        "how_to_verify": "Query dependencies for mobile-bff at endpoint level, or check logs for login and browse routes to see which upstreams they call."
+      },
+      {
+        "statement": "'settlement-batch' in the report refers to the service named 'batch-settlement'.",
+        "basis": "The dependencies tool rejected 'settlement-batch' and listed 'batch-settlement' among the known services. That error response has no evidence ID, so this is not a cited fact.",
+        "how_to_verify": "Confirm the service name with the settlement team and check that batch-settlement is the job that reported failures."
+      },
+      {
+        "statement": "No past incident involves midnight or date-rollover failures in ledger-api, ledger-db, or the balance path.",
+        "basis": "The past_incidents search with midnight, date rollover, ledger, balance, and settlement keywords returned no results. Keyword search may be too narrow.",
+        "how_to_verify": "Search past incidents by tags for ledger-db, ledger-api, and date-related failures, and widen the keywords."
+      },
+      {
+        "statement": "accounts-api has no recorded downstream dependencies, and no secrets, cert, or other shared infrastructure provider appears in the graph.",
+        "basis": "The dependencies query for accounts-api returned an empty evidence list. The graph may be incomplete, and no query was run for ledger-db, which may have its own dependencies.",
+        "how_to_verify": "Query dependencies for ledger-db (downstream) and check the service catalog for secrets, cert, or time-related dependencies that could fail at midnight."
+      },
+      {
+        "statement": "No metrics, logs, or deploys were checked, so the dependency graph alone does not show a fault in ledger-api or ledger-db.",
+        "basis": "Only the dependencies and past_incidents tools were used in this task.",
+        "how_to_verify": "Pull ledger-api and ledger-db error logs and 5xx metrics for 2026-11-13T23:00Z to 2026-11-14T00:45Z, and check deploys or config changes for those services in the same window."
+      },
+      {
+        "statement": "The expired certificate served by ledger-api.internal is the one issued from the ledger-api-tls secret. Its notAfter is 2026-11-14T00:00:00Z.",
+        "basis": "The 23:05Z WARN names ledger-api-tls as skipped for renewal, and both callers report cert expiry right after midnight. No log ties the expired cert to that secret by name.",
+        "how_to_verify": "Inspect the served certificate's notAfter and issuer, and compare it with the ledger-api-tls secret contents."
+      },
+      {
+        "statement": "The renew-20261106 lock was stale (crashed job), so cert-renewer never renewed the certificate before expiry.",
+        "basis": "The cert-renewer WARN in log:inc05:0011 describes the lock as stale and held by a job dated 2026-11-06.",
+        "how_to_verify": "Check cert-renewer job history and the lock table for renew-20261106. Then clear the lock and confirm renewal succeeds."
+      },
+      {
+        "statement": "GET /v2/balance calls ledger-api, and /v2/profile and login use accounts-api only.",
+        "basis": "Error text in log:inc05:0005 names ledger-api, and log:inc05:0009 shows profile served via accounts-api. The dependency graph is service-level, not per-route.",
+        "how_to_verify": "Check route-level traces for /v2/balance, login, and profile."
+      },
+      {
+        "statement": "No relevant deploy to ledger-api or ledger-db caused the failure.",
+        "basis": "The ledger-api deploy query reportedly returned empty, but that result is uncited. The all-services deploy query failed (gap:2).",
+        "how_to_verify": "Re-run the deploys query for ledger-api, ledger-db, mobile-bff, and batch-settlement over 23:00Z-00:45Z."
+      },
+      {
+        "statement": "Post-midnight error volume on mobile-bff matches the 502 reports.",
+        "basis": "The metrics result is partial (gap:1). Only the pre-midnight 0.2% error rate is available.",
+        "how_to_verify": "Re-query error_rate_pct and the 5xx count for mobile-bff after 00:00Z."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Verify the ledger-api-tls certificate's expiry timestamp and chain from mobile-bff and batch-settlement hosts, and confirm that TLS handshake failures to ledger-api match the 00:00Z expiry.",
+        "rationale": "h1 is the leading hypothesis at 0.75 confidence, but its expiry claim and the TLS-failure link to both callers are not yet directly confirmed. A direct check is the cheapest way to confirm or rule it out before any change.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Inspect the lock held by renew-20261106 and confirm it is stale (owner dead, no active process) before deciding whether to clear it. Then, if confirmed, recommend clearing the stale lock and re-running cert-renewer for ledger-api-tls, with a rollback plan for the lock change.",
+        "rationale": "The stale lock is the proposed reason cert-renewer skipped renewal. Clearing it without confirming it is stale could cause a concurrent renewal conflict, so the check should come first.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "After the renewed certificate is installed, recommend re-checking GET /v2/balance on mobile-bff for 5xx rate recovery and confirming that the aborted nightly settlement batch can be safely re-run.",
+        "rationale": "Confirms that restoring ledger-api TLS resolves both symptoms, which is the prediction h1 makes. Re-running settlement should happen only after the downstream is healthy.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Pull mobile-bff and ledger-api TLS handshake error logs for 23:31Z to 00:05Z and compare the failure signatures (expired certificate versus protocol version mismatch). Consider reverting http.tls_min_version only if those logs show a version-negotiation error.",
+        "rationale": "h2 is contradicted by the settlement failures and the accounts-api path working, so it is low priority. A log comparison is enough to rule it out, and a config revert should be recommended only if the logs point to it.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Re-run the deploys query (gap:2) and the partial metrics query for mobile-bff (gap:1) to fill the missing evidence, and check ledger-db load and lock metrics for the midnight window.",
+        "rationale": "Closes evidence gaps that could still change the ranking. The ledger-db check tests h3 directly, and the deploys query would show any change that coincides with the 23:31Z config change.",
+        "hypothesis_id": "h3"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:1",
+        "tool": "metrics",
+        "reason": "partial result: 1 of 2 rows missing",
+        "service": "mobile-bff",
+        "affects_hypotheses": [
+          "h1",
+          "h2",
+          "h3"
+        ],
+        "task_id": "t1"
+      },
+      {
+        "id": "gap:2",
+        "tool": "deploys",
+        "reason": "tool backend error",
+        "service": null,
+        "affects_hypotheses": [
+          "h2"
+        ],
+        "task_id": "t2"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 15,
+      "llm_calls": 22,
+      "tokens_in": 49511,
+      "tokens_out": 15392,
+      "cache_tokens": 0,
+      "latency_s": 78.224
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_penalty",
+        "subject": "h1",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in t1: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": 0.85,
+        "confidence_after": 0.75
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "h2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in t1: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": 0.07,
+        "confidence_after": 0.0
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "h2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "deploys gap in t2: tool backend error"
+        ],
+        "confidence_before": 0.0,
+        "confidence_after": 0.0
+      },
+      {
+        "rule": "gap_penalty",
+        "subject": "h3",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "metrics gap in t1: partial result: 1 of 2 rows missing"
+        ],
+        "confidence_before": 0.04,
+        "confidence_after": 0.0
+      }
+    ],
+    "failures": []
+  }
+}

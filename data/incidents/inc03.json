@@ -1,0 +1,58 @@
+{
+  "id": "inc03",
+  "report": {
+    "title": "Profile pages returning HTTP 503",
+    "symptoms": [
+      "profile-svc error rate near 40% since about 09:12 UTC",
+      "profile-svc pods are restarting",
+      "Users see a broken profile page or a spinner"
+    ],
+    "affected_service": "profile-svc",
+    "window_start": "2026-11-12T08:30:00Z",
+    "window_end": "2026-11-12T09:50:00Z",
+    "severity": "SEV2"
+  },
+  "logs": [
+    {"id": "log:inc03:0001", "timestamp": "2026-11-12T08:41:10Z", "service": "profile-svc", "level": "INFO", "message": "Starting profile-svc v1.8.0"},
+    {"id": "log:inc03:0002", "timestamp": "2026-11-12T08:55:00Z", "service": "profile-svc", "level": "INFO", "message": "GET /profile/u-1182 200 in 64ms"},
+    {"id": "log:inc03:0003", "timestamp": "2026-11-12T09:11:48Z", "service": "avatar-store", "level": "ERROR", "message": "Volume vol-data-2 remounted read-only after I/O errors; shard 2 unavailable"},
+    {"id": "log:inc03:0004", "timestamp": "2026-11-12T09:12:20Z", "service": "profile-svc", "level": "ERROR", "message": "GET /profile/u-2290 503: avatar-store GET /avatars/u-2290 timed out after 3000ms"},
+    {"id": "log:inc03:0005", "timestamp": "2026-11-12T09:12:41Z", "service": "profile-svc", "level": "ERROR", "message": "panic: nil pointer dereference in render.AvatarThumbnail (v1.8.0)"},
+    {"id": "log:inc03:0006", "timestamp": "2026-11-12T09:13:05Z", "service": "profile-svc", "level": "WARN", "message": "Liveness probe failed: handler pool exhausted (64/64 busy waiting on avatar-store)"},
+    {"id": "log:inc03:0007", "timestamp": "2026-11-12T09:13:30Z", "service": "profile-svc", "level": "WARN", "message": "Container restarted by kubelet (restart count 3)"},
+    {"id": "log:inc03:0008", "timestamp": "2026-11-12T09:14:02Z", "service": "avatar-store", "level": "ERROR", "message": "GET /avatars/u-3310 failed: shard 2 read error (EIO)"},
+    {"id": "log:inc03:0009", "timestamp": "2026-11-12T09:15:12Z", "service": "profile-svc", "level": "ERROR", "message": "GET /profile/u-3310 503: avatar-store GET /avatars/u-3310 timed out after 3000ms"},
+    {"id": "log:inc03:0010", "timestamp": "2026-11-12T09:16:00Z", "service": "avatar-store", "level": "INFO", "message": "GET /healthz 200 (process up)"},
+    {"id": "log:inc03:0011", "timestamp": "2026-11-12T09:17:20Z", "service": "feed-svc", "level": "ERROR", "message": "Thumbnail fetch from avatar-store failed: timeout after 2000ms (fallback to initials)"},
+    {"id": "log:inc03:0012", "timestamp": "2026-11-12T09:20:44Z", "service": "profile-svc", "level": "INFO", "message": "GET /profile/u-0042 200 in 71ms (avatar served from shard 1)"},
+    {"id": "log:inc03:0013", "timestamp": "2026-11-12T09:22:10Z", "service": "user-db", "level": "INFO", "message": "replication lag 0.2s, 140 qps"},
+    {"id": "log:inc03:0014", "timestamp": "2026-11-12T09:26:31Z", "service": "profile-svc", "level": "ERROR", "message": "GET /profile/u-7781 503: avatar-store GET /avatars/u-7781 timed out after 3000ms"}
+  ],
+  "metrics": [
+    {"id": "metric:inc03:err:0001", "timestamp": "2026-11-12T09:00:00Z", "service": "profile-svc", "name": "error_rate_pct", "value": 0.3},
+    {"id": "metric:inc03:err:0002", "timestamp": "2026-11-12T09:15:00Z", "service": "profile-svc", "name": "error_rate_pct", "value": 38.0},
+    {"id": "metric:inc03:restarts:0001", "timestamp": "2026-11-12T09:15:00Z", "service": "profile-svc", "name": "pod_restarts", "value": 7.0},
+    {"id": "metric:inc03:avok:0001", "timestamp": "2026-11-12T09:00:00Z", "service": "avatar-store", "name": "request_success_pct", "value": 99.9},
+    {"id": "metric:inc03:avok:0002", "timestamp": "2026-11-12T09:15:00Z", "service": "avatar-store", "name": "request_success_pct", "value": 61.0},
+    {"id": "metric:inc03:avhealth:0001", "timestamp": "2026-11-12T09:15:00Z", "service": "avatar-store", "name": "health_check_ok", "value": 1.0},
+    {"id": "metric:inc03:feederr:0001", "timestamp": "2026-11-12T09:15:00Z", "service": "feed-svc", "name": "thumbnail_fallback_pct", "value": 35.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc03:0001", "timestamp": "2026-11-12T08:40:00Z", "service": "profile-svc", "version": "v1.8.0", "description": "New avatar thumbnail renderer"},
+    {"id": "deploy:inc03:0002", "timestamp": "2026-11-10T15:00:00Z", "service": "avatar-store", "version": "v0.14.2", "description": "Log format change"}
+  ],
+  "config_changes": [],
+  "dependencies": [
+    {"id": "dependency:inc03:0001", "service": "profile-svc", "depends_on": "avatar-store"},
+    {"id": "dependency:inc03:0002", "service": "profile-svc", "depends_on": "user-db"},
+    {"id": "dependency:inc03:0003", "service": "feed-svc", "depends_on": "avatar-store"},
+    {"id": "dependency:inc03:0004", "service": "web-frontend", "depends_on": "profile-svc"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc03:0001", "title": "Profile pages crash-looping after a renderer release", "tags": ["profile", "crashloop", "deploy"], "root_cause": "A release added a nil pointer bug in the page renderer", "resolution": "Rolled back profile-svc"},
+    {"id": "past:inc03:0002", "title": "Avatar images missing after storage disk fault", "tags": ["avatar", "storage", "disk"], "root_cause": "A storage node disk failed and its shard went read-only", "resolution": "Failed the shard over to a replica and replaced the disk"}
+  ],
+  "failure_schedule": [
+    {"tool": "deploys", "call_index": 1, "mode": "timeout"}
+  ]
+}

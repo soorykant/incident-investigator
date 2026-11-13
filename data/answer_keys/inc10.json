@@ -1,0 +1,21 @@
+{
+  "incident_id": "inc10",
+  "expected_outcome": "root_cause",
+  "service": "parcelhub-api",
+  "category": "third_party_limit",
+  "key_evidence_ids": ["log:inc10:0003", "log:inc10:0008", "metric:inc10:rpm:0002", "metric:inc10:quotes:0002", "log:inc10:0002", "dependency:inc10:0001"],
+  "traps": [
+    {
+      "description": "shipping-svc v5.2.0 went out 5 minutes before the failures, logs a carrier-selection warning, and a past incident blames a carrier release; but every failure is a 429 from parcelhub-api, and the errors return after the 12:27 rollback (which the first, partial deploys call hides)",
+      "misleading_evidence_ids": ["deploy:inc10:0002", "log:inc10:0004", "past:inc10:0001"]
+    },
+    {
+      "description": "Errors drop right after the rollback, which looks like the rollback fixed it; the dip follows a fall in quote traffic to 580/min, and errors climb back to 38% with v5.1.4 running",
+      "misleading_evidence_ids": ["deploy:inc10:0003", "metric:inc10:err:0003"]
+    },
+    {
+      "description": "parcelhub-api's status page says all systems operational, which seems to clear the provider; a status page does not report a customer hitting its plan limit",
+      "misleading_evidence_ids": ["log:inc10:0009"]
+    }
+  ]
+}

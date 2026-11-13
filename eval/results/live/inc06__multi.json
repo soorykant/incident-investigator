@@ -1,0 +1,627 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc06",
+  "system": "multi",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T06:59:12.852776Z",
+  "report": {
+    "incident_id": "inc06",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "inventory-db",
+        "category": "db_migration",
+        "summary": "inventory-db migration-0142 started at 10:14:20Z and finished at 10:16:55Z. It rebuilt stock_levels and dropped idx_stock_sku_warehouse, and its completion log says the replacement index migration 0143 (idx_stock_sku_wh_v2) was still pending. From 10:18:02Z the stock lookup SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2 ran as a Seq Scan over 8.2M rows, taking 4812 ms, then 5230 ms. seq_scans_per_s went from 0.2 to 1290 and DB CPU from 31% to 96%. At 10:24:50Z the DB had 212 active queries, with that SELECT as the top statement. Lookups hit the 5000 ms timeout from 10:18:40Z, so inventory-svc returns 504s with p99 around 5 s, and cart-api and product-page degrade. Request rate stayed flat (+2%) and inventory-svc CPU was 22% while waiting on the DB, which points to a plan regression rather than load. Remediation: create the (sku, warehouse_id) index, either by applying 0143 or recreating idx_stock_sku_warehouse concurrently, then ANALYZE stock_levels and watch seq scans, DB CPU and p99. Still to confirm: index absence in pg_indexes, an EXPLAIN on the lookup query, and that 0143 has not run.",
+        "supporting_ids": [
+          "deploy:inc06:0001",
+          "log:inc06:0002",
+          "log:inc06:0003",
+          "log:inc06:0004",
+          "log:inc06:0006",
+          "log:inc06:0007",
+          "metric:inc06:seq:0001",
+          "metric:inc06:seq:0002",
+          "metric:inc06:dbcpu:0001",
+          "metric:inc06:dbcpu:0002",
+          "metric:inc06:p99:0001",
+          "metric:inc06:p99:0002",
+          "metric:inc06:p99:0003",
+          "metric:inc06:p99:0004",
+          "log:inc06:0005",
+          "log:inc06:0010",
+          "log:inc06:0012",
+          "log:inc06:0011",
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002",
+          "dependency:inc06:0001",
+          "dependency:inc06:0002",
+          "dependency:inc06:0003"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.88,
+        "final_confidence": 0.88
+      },
+      {
+        "id": "h3",
+        "service": "inventory-db",
+        "category": "capacity",
+        "summary": "Hot-row lock contention on popular flash-sale SKUs saturates inventory-db and causes the query timeouts. This now fits poorly. The slow-query logs show the stock lookup spending its time in an 8.2M-row Seq Scan, not lock waits, and the DB is CPU-bound at 96% with the SELECT as the top statement. Lock waits would not produce a 6000x seq-scan rise or high CPU. Lock data was never retrieved: the lock_wait metric returned empty. Contention could therefore still be a minor contributing factor, but it is not the trigger. Next check: pg_locks and pg_stat_activity with wait_event_type='Lock' for 10:10Z-10:30Z.",
+        "supporting_ids": [
+          "log:inc06:0005",
+          "log:inc06:0010",
+          "log:inc06:0012",
+          "dependency:inc06:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc06:0004",
+          "log:inc06:0006",
+          "log:inc06:0007",
+          "metric:inc06:seq:0002",
+          "metric:inc06:dbcpu:0002",
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002",
+          "deploy:inc06:0001"
+        ],
+        "proposed_confidence": 0.04,
+        "final_confidence": 0.04
+      },
+      {
+        "id": "h4",
+        "service": "inventory-svc",
+        "category": "bad_deploy",
+        "summary": "The v2.9.0 'Add reservation cache' deploy at 10:30Z had a cold cache (100% miss ratio while warming), which pushed all reads onto the DB. It cannot be the trigger, because Seq Scan slow queries, 96% DB CPU and 5100 ms p99 were all present before 10:30Z. At most it is an aggravating factor after 10:30Z.",
+        "supporting_ids": [
+          "deploy:inc06:0002",
+          "log:inc06:0009"
+        ],
+        "contradicting_ids": [
+          "metric:inc06:p99:0003",
+          "log:inc06:0004",
+          "log:inc06:0005",
+          "log:inc06:0007",
+          "metric:inc06:seq:0002"
+        ],
+        "proposed_confidence": 0.04,
+        "final_confidence": 0.04
+      },
+      {
+        "id": "h2",
+        "service": "inventory-svc",
+        "category": "capacity",
+        "summary": "Flash-sale traffic outgrew inventory-svc capacity, as in the Black Friday precedent. This is contradicted by several observations. Request rate was flat (+2%) across the onset, inventory-svc ran at 22% CPU while 'waiting on DB', and the DB slow-query logs show a plan regression (Seq Scan) rather than volume.",
+        "supporting_ids": [
+          "past:inc06:0001",
+          "config:inc06:0001"
+        ],
+        "contradicting_ids": [
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002",
+          "log:inc06:0011",
+          "metric:inc06:seq:0002",
+          "log:inc06:0004",
+          "log:inc06:0007"
+        ],
+        "proposed_confidence": 0.02,
+        "final_confidence": 0.02
+      },
+      {
+        "id": "h5",
+        "service": "inventory-svc",
+        "category": "config_change",
+        "summary": "Raising autoscaler.max_replicas from 12 to 20 at 09:55Z added connections and load that overwhelmed inventory-db. This does not line up with onset: p99 was normal at 10:00Z and 10:10Z, and the degradation starts only after the migration, with Seq Scan plans. The extra replicas added at 10:45Z may add DB concurrency but did not start the incident.",
+        "supporting_ids": [
+          "config:inc06:0001",
+          "log:inc06:0011"
+        ],
+        "contradicting_ids": [
+          "metric:inc06:p99:0001",
+          "metric:inc06:p99:0002",
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002",
+          "log:inc06:0004"
+        ],
+        "proposed_confidence": 0.02,
+        "final_confidence": 0.02
+      }
+    ],
+    "facts": [
+      {
+        "statement": "inventory-svc p99 latency was 85 ms at 10:00Z and 92 ms at 10:10Z, then jumped to 5100 ms at 10:20Z and was still 5020 ms at 10:40Z.",
+        "evidence_ids": [
+          "metric:inc06:p99:0001",
+          "metric:inc06:p99:0002",
+          "metric:inc06:p99:0003",
+          "metric:inc06:p99:0004"
+        ]
+      },
+      {
+        "statement": "inventory-svc requests_per_s was 1310 at 10:10Z and 1340 at 10:20Z, about a 2% change across the latency jump. Request volume did not visibly rise at the onset of the latency degradation.",
+        "evidence_ids": [
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002"
+        ]
+      },
+      {
+        "statement": "inventory-db seq_scans_per_s rose from 0.2 at 10:10Z to 1290 at 10:20Z.",
+        "evidence_ids": [
+          "metric:inc06:seq:0001",
+          "metric:inc06:seq:0002"
+        ]
+      },
+      {
+        "statement": "inventory-db cpu_pct rose from 31% at 10:10Z to 96% at 10:20Z.",
+        "evidence_ids": [
+          "metric:inc06:dbcpu:0001",
+          "metric:inc06:dbcpu:0002"
+        ]
+      },
+      {
+        "statement": "The first inventory-db CPU and seq-scan samples fall in the same 10:10Z-10:20Z interval as the inventory-svc p99 jump, so the database saturation coincides with the latency onset.",
+        "evidence_ids": [
+          "metric:inc06:dbcpu:0002",
+          "metric:inc06:seq:0002",
+          "metric:inc06:p99:0003"
+        ]
+      },
+      {
+        "statement": "First ERROR log showing inventory-db timeouts is at 10:18:40Z: 'GET /stock/sku-55120 504: inventory-db query timeout after 5000ms'. Later timeout errors appear at 10:36:41Z and 10:52:12Z.",
+        "evidence_ids": [
+          "log:inc06:0005",
+          "log:inc06:0010",
+          "log:inc06:0012"
+        ]
+      },
+      {
+        "statement": "A config change at 09:55Z raised autoscaler.max_replicas from 12 to 20, before the latency onset.",
+        "evidence_ids": [
+          "config:inc06:0001"
+        ]
+      },
+      {
+        "statement": "Deploy v2.9.0 ('Add reservation cache') went out at 10:30Z, after the latency jump had already begun at about 10:18-10:20Z.",
+        "evidence_ids": [
+          "deploy:inc06:0002"
+        ]
+      },
+      {
+        "statement": "At 10:33Z inventory-svc logged 'Reservation cache miss ratio 100% (warming)'.",
+        "evidence_ids": [
+          "log:inc06:0009"
+        ]
+      },
+      {
+        "statement": "At 10:45Z inventory-svc logged 'Autoscaler added 4 replicas (CPU 22%, waiting on DB)'.",
+        "evidence_ids": [
+          "log:inc06:0011"
+        ]
+      },
+      {
+        "statement": "No 'stock unavailable' messages appear in the ERROR or WARN logs returned for the window. The returned error logs show only 504 inventory-db query timeouts.",
+        "evidence_ids": [
+          "log:inc06:0005",
+          "log:inc06:0010",
+          "log:inc06:0012",
+          "log:inc06:0009",
+          "log:inc06:0011"
+        ]
+      },
+      {
+        "statement": "inventory-svc autoscaler.max_replicas was changed from 12 to 20 at 2026-11-15T09:55:00Z, about 23 minutes before the 10:18 UTC symptom onset.",
+        "evidence_ids": [
+          "config:inc06:0001"
+        ]
+      },
+      {
+        "statement": "inventory-db deployed migration-0142 at 2026-11-15T10:14:00Z. It rebuilds the stock_levels table and drops index idx_stock_sku_warehouse, which the description says is superseded by 0143. This is about 4 minutes before the symptom onset.",
+        "evidence_ids": [
+          "deploy:inc06:0001"
+        ]
+      },
+      {
+        "statement": "inventory-svc deployed v2.9.0 at 2026-11-15T10:30:00Z, described as 'Add reservation cache'. This is about 12 minutes after the symptom onset.",
+        "evidence_ids": [
+          "deploy:inc06:0002"
+        ]
+      },
+      {
+        "statement": "inventory-svc p99 latency was 85 ms at 10:00 UTC and 92 ms at 10:10 UTC, then 5100 ms at 10:20 UTC and 5020 ms at 10:40 UTC. The jump occurred between the 10:10 and 10:20 samples, which brackets the 10:18 onset.",
+        "evidence_ids": [
+          "metric:inc06:p99:0001",
+          "metric:inc06:p99:0002",
+          "metric:inc06:p99:0003",
+          "metric:inc06:p99:0004"
+        ]
+      },
+      {
+        "statement": "inventory-svc requests_per_s was 1310 at 10:10 UTC and 1340 at 10:20 UTC. Traffic changed only marginally across the latency jump.",
+        "evidence_ids": [
+          "metric:inc06:rps:0001",
+          "metric:inc06:rps:0002"
+        ]
+      },
+      {
+        "statement": "The dependency graph shows inventory-svc depends on inventory-db. cart-api and product-page both depend on inventory-svc.",
+        "evidence_ids": [
+          "dependency:inc06:0001",
+          "dependency:inc06:0002",
+          "dependency:inc06:0003"
+        ]
+      },
+      {
+        "statement": "The deploys query across all services in the window returned no other deploys or config changes for inventory-svc or inventory-db, and no feature-flag, rate-limit, cache-TTL or pool-size changes.",
+        "evidence_ids": [
+          "config:inc06:0001",
+          "deploy:inc06:0001",
+          "deploy:inc06:0002"
+        ]
+      },
+      {
+        "statement": "The service graph lists inventory-svc as depending on inventory-db.",
+        "evidence_ids": [
+          "dependency:inc06:0001"
+        ]
+      },
+      {
+        "statement": "The service graph lists cart-api as depending on inventory-svc.",
+        "evidence_ids": [
+          "dependency:inc06:0002"
+        ]
+      },
+      {
+        "statement": "The service graph lists product-page as depending on inventory-svc.",
+        "evidence_ids": [
+          "dependency:inc06:0003"
+        ]
+      },
+      {
+        "statement": "Querying the graph for inventory-db in both directions returned only the inventory-svc to inventory-db edge, so inventory-db has no other listed upstream or downstream edges.",
+        "evidence_ids": [
+          "dependency:inc06:0001"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'Inventory slowness during Black Friday traffic peak' has the root cause 'Traffic exceeded the replica count of inventory-svc' and the resolution 'Raised the autoscaler limit'.",
+        "evidence_ids": [
+          "past:inc06:0001"
+        ]
+      },
+      {
+        "statement": "Migration-0142 started at 10:14:20Z with the description 'rebuild stock_levels, drop idx_stock_sku_warehouse'.",
+        "evidence_ids": [
+          "log:inc06:0002"
+        ]
+      },
+      {
+        "statement": "A deploy of migration-0142 to inventory-db was recorded at 10:14:00Z, described as 'Rebuild stock_levels table; drop idx_stock_sku_warehouse (superseded by 0143)'.",
+        "evidence_ids": [
+          "deploy:inc06:0001"
+        ]
+      },
+      {
+        "statement": "Migration-0142 finished at 10:16:55Z in 2m35s. The same log line states that migration 0143 (create idx_stock_sku_wh_v2) was pending.",
+        "evidence_ids": [
+          "log:inc06:0003"
+        ]
+      },
+      {
+        "statement": "At 10:18:02Z inventory-db logged a 4812 ms slow query on SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2, executed as a Seq Scan over 8.2M rows.",
+        "evidence_ids": [
+          "log:inc06:0004"
+        ]
+      },
+      {
+        "statement": "At 10:21:13Z the same query pattern was logged as a Seq Scan over 8.2M rows taking 5230 ms.",
+        "evidence_ids": [
+          "log:inc06:0006"
+        ]
+      },
+      {
+        "statement": "At 10:24:50Z inventory-db logged CPU at 96% with 212 active queries, the top statement being SELECT qty FROM stock_levels.",
+        "evidence_ids": [
+          "log:inc06:0007"
+        ]
+      },
+      {
+        "statement": "cpu_pct was 31.0 at 10:10:00Z and 96.0 at 10:20:00Z.",
+        "evidence_ids": [
+          "metric:inc06:dbcpu:0001",
+          "metric:inc06:dbcpu:0002"
+        ]
+      },
+      {
+        "statement": "seq_scans_per_s was 0.2 at 10:10:00Z and 1290.0 at 10:20:00Z, so the sequential-scan rise falls between the two samples, after the 10:14 migration.",
+        "evidence_ids": [
+          "metric:inc06:seq:0001",
+          "metric:inc06:seq:0002"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The inventory-db seq-scan spike (0.2 to 1290 per second) is caused by a query-plan change, a missing index, or a new access pattern, and that is what saturates the DB and starts the timeouts.",
+        "basis": "Seq scans jump by about 6000x in the same 10-minute interval where DB CPU goes from 31% to 96% and inventory-svc p99 jumps to 5 s. No query-level evidence was pulled.",
+        "how_to_verify": "Pull inventory-db slow query log and EXPLAIN plans for the stock lookup query from 10:00Z to 10:30Z. Check for index or schema changes and for stats or plan regressions."
+      },
+      {
+        "statement": "The 09:55Z autoscaler max_replicas change (12 to 20) increased concurrent connections or query load on inventory-db and contributed to saturation.",
+        "basis": "The config change precedes onset by about 23 minutes. The 10:45Z autoscaler log says replicas were added while waiting on the DB, which suggests scaling adds DB load without adding capacity.",
+        "how_to_verify": "Check inventory-db connection count and connection pool metrics against replica count over 09:50Z-11:15Z. Compare DB CPU before and after the replica increase."
+      },
+      {
+        "statement": "The flash sale is not the primary driver of the degradation. Request volume was roughly flat, so the slowdown is probably a DB-side or query-plan problem and not raw traffic growth.",
+        "basis": "requests_per_s was 1310 at 10:10Z and 1340 at 10:20Z, a 2% change. However, this is aggregate volume and may not capture sale-specific SKU or endpoint hot spots.",
+        "how_to_verify": "Break down request rate per endpoint and SKU (e.g. /stock/sku-*) for 09:50Z-11:15Z and compare against flash-sale start time and sale-product traffic."
+      },
+      {
+        "statement": "The v2.9.0 reservation cache deploy is not the trigger of onset. It may worsen the problem through cold-cache misses that push load onto the DB, as the 10:33Z warning suggests.",
+        "basis": "Latency jumped at 10:18-10:20Z, before the 10:30Z deploy. The 10:33Z log reports a 100% cache miss ratio while warming, which would send all reads to the DB.",
+        "how_to_verify": "Check inventory-svc cache hit ratio over time and DB read volume before and after the 10:30Z deploy. Confirm whether cache misses correlate with DB load after 10:30Z."
+      },
+      {
+        "statement": "The 'stock unavailable' symptom on the cart page is downstream of the inventory-db timeouts, which make inventory-svc return failures that the cart treats as unavailable.",
+        "basis": "The 504 timeouts are the only error type seen in returned logs. Cart-side logs were not pulled and no 'stock unavailable' message appears in inventory-svc logs.",
+        "how_to_verify": "Pull cart-service logs and error counts for 'stock unavailable' from 10:15Z onward and correlate with inventory-svc 504 timestamps."
+      },
+      {
+        "statement": "Metrics are incomplete. p50 latency, error rate, CPU, memory, and thread or connection pool usage for inventory-svc were not returned. Samples are also sparse (about 10-minute intervals), so the exact onset within 10:10-10:20Z is uncertain.",
+        "basis": "The metrics call returned only p99_latency_ms and requests_per_s for inventory-svc, and the first call was partial (gap:1, 4 of 6 rows missing). The second call closed the gap but did not return saturation metrics.",
+        "how_to_verify": "Re-query inventory-svc metrics by name: p50_latency_ms, error_rate, cpu_pct, memory, and thread/connection pool usage, at 1-minute resolution from 10:10Z to 10:30Z."
+      },
+      {
+        "statement": "Logs are limited to ERROR and WARN levels, and no INFO or DEBUG lines were pulled. The autoscaler's 'CPU 22%' figure suggests inventory-svc itself is not CPU-bound, but this was not verified.",
+        "basis": "Only level-filtered queries were run, and the tool budget was exhausted before per-pod saturation data was retrieved.",
+        "how_to_verify": "Pull inventory-svc per-instance CPU, memory, and thread pool metrics for 10:00Z-10:30Z and check whether threads are blocked waiting on DB connections."
+      },
+      {
+        "statement": "The autoscaler max_replicas increase is not a scaling event by itself. No replica-count or autoscaling action events appear in the results, so it is unknown whether replicas were actually added.",
+        "basis": "Only a config change row exists for autoscaler.max_replicas. No scaling event rows were returned.",
+        "how_to_verify": "Query replica count and autoscaler event history for inventory-svc from 09:50 to 11:15 UTC."
+      },
+      {
+        "statement": "The deploys result is complete for the window and covers all services, so no other flash-sale config changes (rate limits, cache TTLs, pool sizes, feature flags) were made.",
+        "basis": "The deploys call used service=null, returned status ok, and reported omitted=0. Config changes that the tool does not record would not appear.",
+        "how_to_verify": "Check the config management system and feature-flag audit log directly for inventory-svc, inventory-db, cart-api and product-page in the window."
+      },
+      {
+        "statement": "The 10:30 v2.9.0 reservation-cache deploy is unlikely to be the initial trigger, because p99 had already reached 5100 ms at 10:20 UTC, before that deploy. It may still have contributed to or prolonged the degradation.",
+        "basis": "Timestamp ordering of deploy:inc06:0002 against metric:inc06:p99:0003.",
+        "how_to_verify": "Check whether p99 changed at or after 10:30 UTC, and whether the v2.9.0 canary or rollout went to all pods at once."
+      },
+      {
+        "statement": "The inventory-db migration-0142 that dropped idx_stock_sku_warehouse, about 4 minutes before onset, is the leading candidate for the latency jump. The index drop could force full scans on stock lookups. This is not yet confirmed.",
+        "basis": "Timing: migration at 10:14 UTC, onset at about 10:18 UTC. The index drop is plausibly relevant to SKU and warehouse stock lookups.",
+        "how_to_verify": "Check inventory-db query latency and plan changes around 10:14 UTC, and whether migration 0143 (which supersedes the index) has run or been applied."
+      },
+      {
+        "statement": "No metrics were pulled for inventory-db, cart-api or product-page, so the lock, latency and error behaviour of the direct dependencies is unverified.",
+        "basis": "Only inventory-svc metrics were queried. The earlier partial result (gap:3) was closed by the second inventory-svc query.",
+        "how_to_verify": "Pull p99, error rate and lock wait metrics for inventory-db, and error rate and timeouts for cart-api and product-page, from 09:50 to 11:15 UTC."
+      },
+      {
+        "statement": "inventory-svc has no cache, external stock API, or warehouse API dependency beyond inventory-db.",
+        "basis": "The dependency graph returned only the inventory-db edge for inventory-svc. No cache or external-API edges appeared, but the graph may not model them.",
+        "how_to_verify": "Check inventory-svc configuration and client libraries for cache clients, connection pools, and outbound HTTP calls, and confirm with the service owner."
+      },
+      {
+        "statement": "The likely bottleneck is contention on inventory-db, probably hot-row locking on popular SKUs during the flash sale, which would explain p99 latency above 5 s and intermittent 'stock unavailable' on the cart.",
+        "basis": "Symptoms cite a flash sale and stock lookups; inventory-svc is the only path from product-page and cart-api to stock data. This is inference, not a tool result.",
+        "how_to_verify": "Pull inventory-db lock-wait and slow-query metrics and logs for 09:50 to 11:15 UTC, and check row-level lock contention on the top flash-sale SKUs."
+      },
+      {
+        "statement": "No past incidents match the query on inventory-db, hot-row, flash sale, or stock lookup latency.",
+        "basis": "The past_incidents call returned zero evidence rows, so there is no evidence ID to cite.",
+        "how_to_verify": "Search past incidents with broader terms such as 'lock wait', 'flash sale', 'inventory', and 'stock unavailable', and without the inventory-svc tag."
+      },
+      {
+        "statement": "No deploys or config changes to inventory-svc or inventory-db are confirmed for the window, and the dependency graph does not show any shared resources with other services.",
+        "basis": "Not checked. Deploys were outside my scope for this call, and the graph returned no shared-dependency edges.",
+        "how_to_verify": "Run the deploys tool for inventory-svc and inventory-db from 09:50 to 11:15 UTC, and check for other services that share inventory-db."
+      },
+      {
+        "statement": "The only relevant historical precedent is the Black Friday traffic-peak incident (past:inc06:0001), where traffic outran inventory-svc replicas. The current flash-sale latency may have the same cause, but this is unconfirmed.",
+        "basis": "Only one past incident was returned for inventory-svc; the keyword searches for 'flash sale', 'cache stampede', and 'latency' returned no matching incidents.",
+        "how_to_verify": "Check inventory-svc replica count and autoscaler limit against the flash-sale request rate in the window (use metrics for request rate, replica count, and CPU). Compare with the Black Friday incident's details."
+      },
+      {
+        "statement": "No past incident is known to involve cache stampede, lock contention, or connection pool exhaustion in inventory-svc or its dependencies.",
+        "basis": "The 'cache stampede' and 'latency' searches returned no evidence. The combined search (keywords including lock contention and connection pool) timed out after 3 attempts. The 'lock contention' and 'connection pool' terms were never searched on their own, and the tags=['inventory-svc'] search was not retried after the timeout.",
+        "how_to_verify": "Re-run past_incidents with 'lock contention' and 'connection pool' as separate keywords, and with tags=['inventory-svc'] alone. Then check metrics and logs for pool saturation and lock waits in the window."
+      },
+      {
+        "statement": "Results from the past_incidents search are incomplete. The tool returns no date or incident ID for the Black Friday match, so its timing and fix details cannot be confirmed.",
+        "basis": "The returned payload for past:inc06:0001 includes only title, tags, root_cause, and resolution. The first combined search timed out, and the later searches returned no date fields.",
+        "how_to_verify": "Retrieve the full record for the Black Friday incident from the incident tracker, including its date, timeline, and whether the same autoscaler limit still applies."
+      },
+      {
+        "statement": "The jump in sequential scans comes from stock lookup queries that used to rely on idx_stock_sku_warehouse.",
+        "basis": "The 0142 index drop at 10:14Z coincides with seq_scans_per_s rising from 0.2 to 1290 in the 10:10Z-10:20Z interval. No query-level data was pulled.",
+        "how_to_verify": "Check pg_stat_user_tables seq_scan counts for stock_levels, EXPLAIN the /stock/sku query, and confirm whether the index exists and whether migration 0143 ran."
+      },
+      {
+        "statement": "The cart 'stock unavailable' message is how cart-api renders inventory-svc 504 timeouts.",
+        "basis": "cart-api depends on inventory-svc. The only errors in inventory-svc logs are 504 DB timeouts. Cart logs were not pulled.",
+        "how_to_verify": "Correlate cart-api 'stock unavailable' log lines with inventory-svc 504 timestamps from 10:15Z onward."
+      },
+      {
+        "statement": "Flash-sale traffic did not change materially at onset.",
+        "basis": "Aggregate rps went from 1310 to 1340, a 2% change. Per-SKU hot spots are not visible in aggregate rps.",
+        "how_to_verify": "Break down request rate per endpoint and SKU, and confirm the flash-sale start time."
+      },
+      {
+        "statement": "The exact onset falls between the 10:10Z and 10:20Z samples, close to 10:18Z.",
+        "basis": "Metrics are sampled about every 10 minutes. The first timeout log is at 10:18:40Z.",
+        "how_to_verify": "Re-query p99 and DB CPU at 1-minute resolution for 10:10Z-10:25Z and confirm the rise starts after the 10:14Z migration."
+      },
+      {
+        "statement": "The sequential scans are caused by the missing idx_stock_sku_warehouse index, since the rise starts right after migration-0142 dropped it and the slow-query log shows Seq Scan on the lookup query.",
+        "basis": "Temporal correlation between the 10:14 migration, the 10:16 finish, and the 10:18+ Seq Scan slow-query logs and the seq_scans_per_s rise.",
+        "how_to_verify": "Run EXPLAIN on the stock_levels lookup query against the current schema, confirm via the catalog that no index covers (sku, warehouse_id), and confirm that migration 0142 completed the drop."
+      },
+      {
+        "statement": "Hot-row locking is not ruled out. The lock_wait metric returned no data, so lock behaviour is unknown rather than shown to be low.",
+        "basis": "Empty metric result for lock_wait over the 10:10Z–10:30Z window.",
+        "how_to_verify": "Query blocked and waiting sessions directly (pg_stat_activity wait_event_type = 'Lock', pg_locks ungranted entries) for 10:10Z–10:30Z, or check whether the stored metric name differs from 'lock_wait'."
+      },
+      {
+        "statement": "Migration-0143 has not started as of 11:15Z. The absence of inventory-db logs after 10:30Z is taken as evidence that no 0143 start was logged, but that absence is not proof.",
+        "basis": "Migration log at 10:16:55Z says 0143 was pending. The 10:30Z–11:15Z log query returned zero rows, which may be partial retrieval.",
+        "how_to_verify": "Check the schema migrations table and pg_indexes for idx_stock_sku_wh_v2, and re-query inventory-db logs for 10:30Z–11:15Z (including the migration tag) to see whether results are complete."
+      },
+      {
+        "statement": "The requested finer-grained metrics (query latency, active connections, blocked queries) were not returned. The metrics query with name=null returned only cpu_pct and seq_scans_per_s, at 10-minute spacing.",
+        "basis": "Metrics result contained only two metric names, two samples each, at 10:10Z and 10:20Z.",
+        "how_to_verify": "Re-query inventory-db metrics for query latency, active connections and blocked queries by name, and request the finest available resolution, since the current samples cannot pin the onset of the rise beyond the 10:10–10:20 interval."
+      },
+      {
+        "statement": "The migration-0142 description says it drops the index, but the log line that reports completion does not explicitly confirm the drop finished.",
+        "basis": "Log 'migration 0142 finished in 2m35s' is the only completion record, and the start line states the intent to drop.",
+        "how_to_verify": "Confirm the index's absence in the catalog (pg_indexes for idx_stock_sku_warehouse) and check the migration's exit status."
+      },
+      {
+        "statement": "The lock_wait metric query for 10:10Z to 10:30Z returned no samples.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The inventory-db logs query for 10:30Z to 11:15Z returned no log lines.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "Migration 0143 (create idx_stock_sku_wh_v2) has not been applied, so stock_levels has no index on (sku, warehouse_id).",
+        "basis": "log:inc06:0003 says 0143 was pending at 10:16:55Z. No 0143 deploy appears in the deploys results, and Seq Scans continue at 10:21Z and 10:24Z. Missing inventory-db logs after 10:30Z are not proof.",
+        "how_to_verify": "Query the schema migrations table and pg_indexes for stock_levels, and confirm neither idx_stock_sku_warehouse nor idx_stock_sku_wh_v2 exists."
+      },
+      {
+        "statement": "The Seq Scan plan is caused by the missing index rather than only by stale statistics after the table rebuild.",
+        "basis": "0142 dropped the index and the logged plan is a full Seq Scan over 8.2M rows. A rebuilt table with stale stats could also mis-plan, but the remediation (index plus ANALYZE) is the same in both cases.",
+        "how_to_verify": "EXPLAIN the stock lookup query, then re-EXPLAIN after ANALYZE stock_levels. If it still seq-scans, the index is missing."
+      },
+      {
+        "statement": "Hot-row lock contention is at most a minor factor.",
+        "basis": "The time is spent in CPU-bound Seq Scans, and the lock_wait metric query returned no samples, which means unknown rather than low.",
+        "how_to_verify": "Check pg_locks for ungranted locks and pg_stat_activity wait events for 10:10Z-10:30Z."
+      },
+      {
+        "statement": "The cart 'stock unavailable' message is how cart-api renders inventory-svc 504 timeouts.",
+        "basis": "cart-api depends on inventory-svc, and the only inventory-svc errors are 504 DB timeouts. Cart logs were not pulled.",
+        "how_to_verify": "Correlate cart-api 'stock unavailable' log lines with inventory-svc 504 timestamps from 10:18Z onward."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Confirm the missing index before changing anything: query pg_indexes on stock_levels for any index covering (sku, warehouse_id), and run EXPLAIN (ANALYZE, BUFFERS) on the stock lookup SELECT with representative sku and warehouse_id values.",
+        "rationale": "The h1 conclusion depends on the (sku, warehouse_id) index being absent. Both checks are still open gaps and are read-only, so they can be run safely during the SEV2 to confirm the plan regression.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Verify that migration 0143 (idx_stock_sku_wh_v2) has not run and is not in progress, by checking the migration history table and pg_stat_progress_create_index.",
+        "rationale": "If 0143 is pending, applying it is the intended fix. If it is partially running, creating a second index by hand could conflict with it or waste I/O on an already-saturated database.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Restore the stock lookup index by applying migration 0143 or by running CREATE INDEX CONCURRENTLY on stock_levels(sku, warehouse_id), using the same definition as the dropped idx_stock_sku_warehouse, and then run ANALYZE stock_levels.",
+        "rationale": "This is the direct remediation for the Seq Scan over 8.2M rows that drives DB CPU to 96% and pushes lookups past the 5000 ms timeout. CONCURRENTLY avoids blocking writes on the live table, and ANALYZE refreshes planner statistics after the rebuild.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "During and after the index build, watch seq_scans_per_s, DB CPU, active query count, inventory-svc p99 and 504 rate, and the cart 'stock unavailable' rate. Be ready to stop the build if DB CPU or I/O rises sharply during the flash sale.",
+        "rationale": "These metrics show whether the fix has worked, and they reveal any new contention caused by the index build while the flash sale is still running.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Pull pg_locks and pg_stat_activity filtered on wait_event_type='Lock' for 10:10Z to 10:30Z to rule out lock contention on hot flash-sale SKUs.",
+        "rationale": "The lock_wait metric returned empty, so contention has never been measured. This is a low-cost check that confirms or rules out a secondary contributor that could persist after the index is restored.",
+        "hypothesis_id": "h3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 23,
+      "llm_calls": 34,
+      "tokens_in": 105500,
+      "tokens_out": 30254,
+      "cache_tokens": 0,
+      "latency_s": 158.217
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in t1: partial result: 4 of 6 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:3",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in t2: partial result: 3 of 6 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "past_incidents gap in t4: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "inventory-db",
+    "expected_category": "db_migration",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 112,
+    "grounded": 112,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 4,
+        "rationale": "Nearly every fact and the h1 summary match their cited rows: deploy:inc06:0001, log:inc06:0002/0003/0004/0006/0007, the seq/dbcpu/p99/rps metrics and log:inc06:0011 all say what is claimed. Two weak spots: the 'no other deploys/config changes' fact is an absence claim cited to the three rows that were found, and h2 lists config:inc06:0001 as support even though that row does not show traffic exceeding capacity."
+      },
+      "fact_assumption_separation": {
+        "score": 3,
+        "rationale": "Facts are clean, directly observed statements, and the key inference that the index drop caused the seq scans is stated as an assumption with a concrete verification step. However, the assumptions list carries stale, contradictory entries that were never reconciled. Examples: 'likely bottleneck is hot-row locking', 'No query-level evidence was pulled' (the slow-query logs log:inc06:0004/0006 do exist), 'deploys not checked', and the Black Friday precedent 'may have the same cause'. There are also several duplicate entries."
+      },
+      "recommended_actions": {
+        "score": 5,
+        "rationale": "The actions are what a good on-call engineer would do. They start with read-only confirmation (pg_indexes, EXPLAIN), then check whether 0143 is pending or in progress to avoid a conflicting build. The fix is to apply 0143 or CREATE INDEX CONCURRENTLY, then ANALYZE, with monitoring and a stop condition during the flash sale. A cheap lock check covers the residual hypothesis."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The report explicitly rules out the capacity/flash-sale story using the flat rps (metric:inc06:rps:0001/0002) and log:inc06:0011. It rules out the v2.9.0 cache deploy because the timeouts predate 10:30 (deploy:inc06:0002 vs metric:inc06:p99:0003 and log:inc06:0005). It recognizes the partial early p99 samples as pre-onset rather than evidence of health."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 16708,
+      "tokens_out": 1058,
+      "cache_tokens": 0
+    },
+    "latency_s": 11.349,
+    "judged_at": "2026-11-13T07:28:13.888183Z"
+  }
+}

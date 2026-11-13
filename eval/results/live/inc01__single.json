@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc01",
+  "system": "single",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T06:43:15.749842Z",
+  "report": {
+    "incident_id": "inc01",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "checkout-svc",
+        "category": "bad_deploy",
+        "summary": "The v2.3.1 discount engine refactor added a null-handling bug in PriceCalculator.applyDiscount, causing NPEs and HTTP 500 on POST /checkout.",
+        "supporting_ids": [
+          "deploy:inc01:0001",
+          "log:inc01:0003",
+          "log:inc01:0004",
+          "log:inc01:0006",
+          "metric:inc01:err:0001",
+          "metric:inc01:err:0002"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.85,
+        "final_confidence": 0.85
+      },
+      {
+        "id": "H2",
+        "service": "pricing-db",
+        "category": "dependency_failure",
+        "summary": "pricing-db returned missing or null discount data, which surfaces as an NPE in applyDiscount.",
+        "supporting_ids": [
+          "dependency:inc01:0002",
+          "log:inc01:0004"
+        ],
+        "contradicting_ids": [
+          "log:inc01:0003",
+          "deploy:inc01:0001"
+        ],
+        "proposed_confidence": 0.07,
+        "final_confidence": 0.07
+      },
+      {
+        "id": "H3",
+        "service": "checkout-svc",
+        "category": "capacity",
+        "summary": "CPU saturation on the checkout-svc nodes is causing request failures.",
+        "supporting_ids": [
+          "metric:inc01:cpu:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc01:0003",
+          "log:inc01:0004"
+        ],
+        "proposed_confidence": 0.05,
+        "final_confidence": 0.05
+      },
+      {
+        "id": "H4",
+        "service": "search-svc",
+        "category": "config_change",
+        "summary": "The search-svc cache TTL reduction at 09:58Z caused extra load that indirectly affects checkout.",
+        "supporting_ids": [
+          "config:inc01:0001"
+        ],
+        "contradicting_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002",
+          "log:inc01:0003"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "checkout-svc v2.3.1 ('Discount engine refactor') was deployed at 10:02:00Z, about 3 minutes before errors began.",
+        "evidence_ids": [
+          "deploy:inc01:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc ERROR logs from 10:04:51Z onward show a NullPointerException in PriceCalculator.applyDiscount and name v2.3.1. POST /checkout returns 500 with the same exception.",
+        "evidence_ids": [
+          "log:inc01:0003",
+          "log:inc01:0004",
+          "log:inc01:0006"
+        ]
+      },
+      {
+        "statement": "checkout-svc error_rate_pct went from 0.4 at 10:00Z to 23.5 at 10:06Z.",
+        "evidence_ids": [
+          "metric:inc01:err:0001",
+          "metric:inc01:err:0002"
+        ]
+      },
+      {
+        "statement": "checkout-svc node_cpu_pct was 94.0 at 10:06Z.",
+        "evidence_ids": [
+          "metric:inc01:cpu:0001"
+        ]
+      },
+      {
+        "statement": "A config change at 09:58Z set search-svc cache.ttl_seconds from 300 to 60.",
+        "evidence_ids": [
+          "config:inc01:0001"
+        ]
+      },
+      {
+        "statement": "checkout-svc depends on payments-svc and pricing-db, and web-frontend calls checkout-svc. search-svc does not appear among checkout-svc's neighbours.",
+        "evidence_ids": [
+          "dependency:inc01:0001",
+          "dependency:inc01:0002",
+          "dependency:inc01:0004"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "payments-svc and pricing-db were healthy during the window.",
+        "basis": "Their log queries for the window came back empty, but no errors in the logs does not prove they were healthy, and I did not check their metrics.",
+        "how_to_verify": "Query metrics for payments-svc and pricing-db (error rate, latency) for 09:45–10:30Z."
+      },
+      {
+        "statement": "The high CPU on checkout-svc is a side effect of the exceptions and failing requests, not a separate capacity problem.",
+        "basis": "Only one CPU sample was returned, at 10:06Z, so there is no pre-deploy baseline to compare against.",
+        "how_to_verify": "Pull node_cpu_pct for 09:30–10:30Z and see whether CPU was already high before 10:02Z."
+      },
+      {
+        "statement": "Rolling back to the version before v2.3.1 would bring the error rate back down.",
+        "basis": "Timing, plus the stack trace pointing at the refactored discount code.",
+        "how_to_verify": "Roll back checkout-svc and watch error_rate_pct."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Roll back checkout-svc from v2.3.1 to the last known-good release. Then confirm that the POST /checkout 5xx rate falls back to its pre-10:05 UTC baseline.",
+        "rationale": "H1 is the top hypothesis at 0.85 and nothing contradicts it. The v2.3.1 deploy (deploy:inc01:0001) lines up with the error spike (metric:inc01:err:0001, metric:inc01:err:0002) and with the NPE stack traces in PriceCalculator.applyDiscount (log:inc01:0003, log:inc01:0004, log:inc01:0006). A rollback is the fastest way to bring the error rate down, and it also tests H1: if the errors stop afterward, H1 is confirmed.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Review the v2.3.1 diff of PriceCalculator.applyDiscount for the null-handling regression. Add a regression test with null or absent discount input before redeploying the discount engine refactor.",
+        "rationale": "This confirms the root cause in code and stops the same defect from coming back when the refactor ships again.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Check the pricing-db responses for the failing requests in log:inc01:0004 to see whether discount fields are actually missing or null at the source. Compare the rate of null discount data before and after 10:05 UTC.",
+        "rationale": "H2 has low confidence (0.07), but it shares log:inc01:0004 with H1. If pricing-db really is returning nulls, then a rollback that hides the NPE could also hide a data problem. This check tells us whether the fix needs a data correction too, or only defensive code.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Check checkout-svc CPU after the rollback. If it normalizes along with the errors, treat the CPU spike as a symptom and not the cause.",
+        "rationale": "H3 rests on a single CPU metric (metric:inc01:cpu:0001), and the NPE logs contradict it. Checking CPU after the rollback lets us rule it out without spending effort on capacity changes.",
+        "hypothesis_id": "H3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 6,
+      "llm_calls": 8,
+      "tokens_in": 17397,
+      "tokens_out": 3151,
+      "cache_tokens": 0,
+      "latency_s": 38.78
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "checkout-svc",
+    "expected_category": "bad_deploy",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 28,
+    "grounded": 28,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 4,
+        "rationale": "The core claims are backed by the rows they cite: deploy:inc01:0001 shows v2.3.1 at 10:02Z, log:inc01:0003, log:inc01:0004 and log:inc01:0006 show the applyDiscount NPE, and metric:inc01:err:0001 and metric:inc01:err:0002 show the jump from 0.4 to 23.5. Two citations are weaker. H2 cites log:inc01:0004 as support for a pricing-db fault, but that log never mentions pricing-db. The claim that search-svc is absent from checkout's neighbours is inferred from the three dependency rows rather than shown by them."
+      },
+      "fact_assumption_separation": {
+        "score": 5,
+        "rationale": "Facts are stated as direct observations. Inferences are listed separately as assumptions, each with an honest basis and a concrete check: downstream health inferred from empty logs, CPU treated as a side effect with no baseline, and rollback efficacy."
+      },
+      "recommended_actions": {
+        "score": 5,
+        "rationale": "Rolling back v2.3.1 and verifying the 5xx rate is what a good on-call engineer would do, followed by fixing the code with a regression test. The pricing-db check and the post-rollback CPU check are proportionate, low-risk ways to rule out the alternatives."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The CPU spike (metric:inc01:cpu:0001) is ranked last at 0.05, is contradicted by the NPE logs, and is framed as a symptom to confirm after rollback. The payments-svc TLS deploy and slow-handshake log are never relied on."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 4513,
+      "tokens_out": 990,
+      "cache_tokens": 0
+    },
+    "latency_s": 9.404,
+    "judged_at": "2026-11-13T07:26:30.563599Z"
+  }
+}

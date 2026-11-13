@@ -1,0 +1,585 @@
+{
+  "incident_id": "inc02",
+  "incident": {
+    "title": "Order placement slow and timing out",
+    "symptoms": [
+      "p99 latency for POST /orders above 8 s since about 14:12 UTC",
+      "About 15% of order requests return HTTP 503",
+      "Order history pages load normally"
+    ],
+    "affected_service": "orders-api",
+    "window_start": "2026-11-11T13:50:00Z",
+    "window_end": "2026-11-11T14:45:00Z",
+    "severity": "SEV2"
+  },
+  "started_at": "2026-11-13T06:44:40.923386Z",
+  "tasks": [],
+  "findings": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "facts": [
+        {
+          "statement": "At 14:10 UTC a config change on orders-api lowered db.pool.max_connections from 50 to 5.",
+          "evidence_ids": [
+            "config:inc02:0001"
+          ]
+        },
+        {
+          "statement": "orders-api v4.12.0 was deployed at 14:05 UTC. It adds a bulk CSV order export endpoint for merchants.",
+          "evidence_ids": [
+            "deploy:inc02:0001"
+          ]
+        },
+        {
+          "statement": "At 13:40 UTC orders-db autovacuum_vacuum_scale_factor was changed from 0.2 to 0.05.",
+          "evidence_ids": [
+            "config:inc02:0002"
+          ]
+        },
+        {
+          "statement": "From 14:12:47 UTC orders-api logged POST /orders 503 errors. Each was a 5000ms timeout acquiring a DB pool connection with the pool at active=5/5 and 33-41 requests waiting.",
+          "evidence_ids": [
+            "log:inc02:0007",
+            "log:inc02:0009",
+            "log:inc02:0012",
+            "log:inc02:0014"
+          ]
+        },
+        {
+          "statement": "orders-api p99 latency was 140ms at 14:00 and 165ms at 14:10. It rose to 8420ms at 14:15 and was 8110ms at 14:25.",
+          "evidence_ids": [
+            "metric:inc02:p99:0001",
+            "metric:inc02:p99:0002",
+            "metric:inc02:p99:0003",
+            "metric:inc02:p99:0004"
+          ]
+        },
+        {
+          "statement": "db_pool_active was 11 at 14:05, before the change. It was 5 at 14:15, with db_pool_waiting at 37.",
+          "evidence_ids": [
+            "metric:inc02:pool:0001",
+            "metric:inc02:pool:0002",
+            "metric:inc02:pool:0003"
+          ]
+        },
+        {
+          "statement": "orders-db CPU was low during the incident: 18% at 14:15 and 16.5% at 14:25.",
+          "evidence_ids": [
+            "metric:inc02:dbcpu:0001",
+            "metric:inc02:dbcpu:0002"
+          ]
+        },
+        {
+          "statement": "orders-api depends on orders-db, inventory-svc and settings-service.",
+          "evidence_ids": [
+            "dependency:inc02:0001",
+            "dependency:inc02:0002",
+            "dependency:inc02:0003"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "Order history pages are probably unaffected because they use a different path, such as a read replica or cache, and do not compete for the same pool.",
+          "basis": "The incident report says history loads normally. The pool errors cite only POST /orders.",
+          "how_to_verify": "Check the orders-api code and config to see which data source the history endpoints use."
+        },
+        {
+          "statement": "inventory-svc and settings-service are healthy.",
+          "basis": "Neither service was queried. The errors point to the local DB pool, not to downstream calls.",
+          "how_to_verify": "Pull metrics and logs for inventory-svc and settings-service for 14:00-14:45."
+        },
+        {
+          "statement": "There is no orders-db CPU baseline before 14:15. Low CPU suggests the DB is not saturated, but I have not compared it with normal levels.",
+          "basis": "The orders-db metrics query returned only two samples.",
+          "how_to_verify": "Query orders-db metrics for 13:00-14:10, including query latency and locks."
+        },
+        {
+          "statement": "It is unknown whether the new CSV export endpoint holds DB connections for a long time.",
+          "basis": "I did not inspect non-ERROR logs or per-endpoint metrics.",
+          "how_to_verify": "Check orders-api INFO logs and per-endpoint connection hold time for the export endpoint."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "dependency:inc02:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "orders-api",
+        "depends_on": "orders-db"
+      }
+    },
+    {
+      "id": "dependency:inc02:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "orders-api",
+        "depends_on": "inventory-svc"
+      }
+    },
+    {
+      "id": "dependency:inc02:0003",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "orders-api",
+        "depends_on": "settings-service"
+      }
+    },
+    {
+      "id": "config:inc02:0002",
+      "kind": "config",
+      "timestamp": "2026-11-11T13:40:00Z",
+      "payload": {
+        "service": "orders-db",
+        "key": "autovacuum_vacuum_scale_factor",
+        "old_value": "0.2",
+        "new_value": "0.05"
+      }
+    },
+    {
+      "id": "deploy:inc02:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-11T14:05:00Z",
+      "payload": {
+        "service": "orders-api",
+        "version": "v4.12.0",
+        "description": "Add bulk CSV order export endpoint for merchants"
+      }
+    },
+    {
+      "id": "config:inc02:0001",
+      "kind": "config",
+      "timestamp": "2026-11-11T14:10:00Z",
+      "payload": {
+        "service": "orders-api",
+        "key": "db.pool.max_connections",
+        "old_value": "50",
+        "new_value": "5"
+      }
+    },
+    {
+      "id": "log:inc02:0007",
+      "kind": "log",
+      "timestamp": "2026-11-11T14:12:47Z",
+      "payload": {
+        "service": "orders-api",
+        "level": "ERROR",
+        "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=37)"
+      }
+    },
+    {
+      "id": "log:inc02:0009",
+      "kind": "log",
+      "timestamp": "2026-11-11T14:14:10Z",
+      "payload": {
+        "service": "orders-api",
+        "level": "ERROR",
+        "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=41)"
+      }
+    },
+    {
+      "id": "log:inc02:0012",
+      "kind": "log",
+      "timestamp": "2026-11-11T14:21:44Z",
+      "payload": {
+        "service": "orders-api",
+        "level": "ERROR",
+        "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=33)"
+      }
+    },
+    {
+      "id": "log:inc02:0014",
+      "kind": "log",
+      "timestamp": "2026-11-11T14:30:02Z",
+      "payload": {
+        "service": "orders-api",
+        "level": "ERROR",
+        "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=39)"
+      }
+    },
+    {
+      "id": "metric:inc02:dbcpu:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:15:00Z",
+      "payload": {
+        "service": "orders-db",
+        "name": "cpu_pct",
+        "value": 18.0
+      }
+    },
+    {
+      "id": "metric:inc02:dbcpu:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:25:00Z",
+      "payload": {
+        "service": "orders-db",
+        "name": "cpu_pct",
+        "value": 16.5
+      }
+    },
+    {
+      "id": "metric:inc02:p99:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:00:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "p99_latency_ms",
+        "value": 140.0
+      }
+    },
+    {
+      "id": "metric:inc02:pool:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:05:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "db_pool_active",
+        "value": 11.0
+      }
+    },
+    {
+      "id": "metric:inc02:p99:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:10:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "p99_latency_ms",
+        "value": 165.0
+      }
+    },
+    {
+      "id": "metric:inc02:p99:0003",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:15:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "p99_latency_ms",
+        "value": 8420.0
+      }
+    },
+    {
+      "id": "metric:inc02:pool:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:15:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "db_pool_active",
+        "value": 5.0
+      }
+    },
+    {
+      "id": "metric:inc02:pool:0003",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:15:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "db_pool_waiting",
+        "value": 37.0
+      }
+    },
+    {
+      "id": "metric:inc02:p99:0004",
+      "kind": "metric",
+      "timestamp": "2026-11-11T14:25:00Z",
+      "payload": {
+        "service": "orders-api",
+        "name": "p99_latency_ms",
+        "value": 8110.0
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "service": "orders-api",
+      "category": "config_change",
+      "summary": "The 14:10 change cut db.pool.max_connections from 50 to 5. That is below normal concurrent demand (11 active at 14:05). The pool saturated, requests queued, connection acquisition timed out after 5s, and POST /orders returned 503 with p99 above 8s. Reverting to 50 should resolve it.",
+      "supporting_ids": [
+        "config:inc02:0001",
+        "metric:inc02:pool:0001",
+        "metric:inc02:pool:0002",
+        "metric:inc02:pool:0003",
+        "log:inc02:0007",
+        "log:inc02:0009",
+        "log:inc02:0012",
+        "log:inc02:0014",
+        "metric:inc02:p99:0002",
+        "metric:inc02:p99:0003",
+        "metric:inc02:dbcpu:0001"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.82,
+      "final_confidence": null
+    },
+    {
+      "id": "H2",
+      "service": "orders-api",
+      "category": "bad_deploy",
+      "summary": "The v4.12.0 deploy at 14:05 added a bulk CSV export endpoint. If it holds DB connections for long periods, it could starve the pool for order placement.",
+      "supporting_ids": [
+        "deploy:inc02:0001",
+        "log:inc02:0007"
+      ],
+      "contradicting_ids": [
+        "metric:inc02:p99:0002",
+        "config:inc02:0001"
+      ],
+      "proposed_confidence": 0.12,
+      "final_confidence": null
+    },
+    {
+      "id": "H3",
+      "service": "orders-db",
+      "category": "config_change",
+      "summary": "The more aggressive autovacuum setting on orders-db (13:40) slowed queries, so connections were held longer and the pool exhausted.",
+      "supporting_ids": [
+        "config:inc02:0002"
+      ],
+      "contradicting_ids": [
+        "metric:inc02:dbcpu:0001",
+        "metric:inc02:dbcpu:0002",
+        "metric:inc02:p99:0001",
+        "metric:inc02:p99:0002"
+      ],
+      "proposed_confidence": 0.05,
+      "final_confidence": null
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "dependencies",
+      "reason": "tool backend error",
+      "service": "orders-api",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 6,
+    "llm_calls": 8,
+    "tokens_in": 17532,
+    "tokens_out": 3511,
+    "cache_tokens": 0,
+    "llm_latency_s": 39.19
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T06:44:40.923442Z",
+      "ended_at": "2026-11-13T06:45:09.731811Z",
+      "status": "done",
+      "tool_calls": 6,
+      "llm_calls": 7
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc02",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "orders-api",
+        "category": "config_change",
+        "summary": "The 14:10 change cut db.pool.max_connections from 50 to 5. That is below normal concurrent demand (11 active at 14:05). The pool saturated, requests queued, connection acquisition timed out after 5s, and POST /orders returned 503 with p99 above 8s. Reverting to 50 should resolve it.",
+        "supporting_ids": [
+          "config:inc02:0001",
+          "metric:inc02:pool:0001",
+          "metric:inc02:pool:0002",
+          "metric:inc02:pool:0003",
+          "log:inc02:0007",
+          "log:inc02:0009",
+          "log:inc02:0012",
+          "log:inc02:0014",
+          "metric:inc02:p99:0002",
+          "metric:inc02:p99:0003",
+          "metric:inc02:dbcpu:0001"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.82,
+        "final_confidence": 0.82
+      },
+      {
+        "id": "H2",
+        "service": "orders-api",
+        "category": "bad_deploy",
+        "summary": "The v4.12.0 deploy at 14:05 added a bulk CSV export endpoint. If it holds DB connections for long periods, it could starve the pool for order placement.",
+        "supporting_ids": [
+          "deploy:inc02:0001",
+          "log:inc02:0007"
+        ],
+        "contradicting_ids": [
+          "metric:inc02:p99:0002",
+          "config:inc02:0001"
+        ],
+        "proposed_confidence": 0.12,
+        "final_confidence": 0.12
+      },
+      {
+        "id": "H3",
+        "service": "orders-db",
+        "category": "config_change",
+        "summary": "The more aggressive autovacuum setting on orders-db (13:40) slowed queries, so connections were held longer and the pool exhausted.",
+        "supporting_ids": [
+          "config:inc02:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc02:dbcpu:0001",
+          "metric:inc02:dbcpu:0002",
+          "metric:inc02:p99:0001",
+          "metric:inc02:p99:0002"
+        ],
+        "proposed_confidence": 0.05,
+        "final_confidence": 0.05
+      }
+    ],
+    "facts": [
+      {
+        "statement": "At 14:10 UTC a config change on orders-api lowered db.pool.max_connections from 50 to 5.",
+        "evidence_ids": [
+          "config:inc02:0001"
+        ]
+      },
+      {
+        "statement": "orders-api v4.12.0 was deployed at 14:05 UTC. It adds a bulk CSV order export endpoint for merchants.",
+        "evidence_ids": [
+          "deploy:inc02:0001"
+        ]
+      },
+      {
+        "statement": "At 13:40 UTC orders-db autovacuum_vacuum_scale_factor was changed from 0.2 to 0.05.",
+        "evidence_ids": [
+          "config:inc02:0002"
+        ]
+      },
+      {
+        "statement": "From 14:12:47 UTC orders-api logged POST /orders 503 errors. Each was a 5000ms timeout acquiring a DB pool connection with the pool at active=5/5 and 33-41 requests waiting.",
+        "evidence_ids": [
+          "log:inc02:0007",
+          "log:inc02:0009",
+          "log:inc02:0012",
+          "log:inc02:0014"
+        ]
+      },
+      {
+        "statement": "orders-api p99 latency was 140ms at 14:00 and 165ms at 14:10. It rose to 8420ms at 14:15 and was 8110ms at 14:25.",
+        "evidence_ids": [
+          "metric:inc02:p99:0001",
+          "metric:inc02:p99:0002",
+          "metric:inc02:p99:0003",
+          "metric:inc02:p99:0004"
+        ]
+      },
+      {
+        "statement": "db_pool_active was 11 at 14:05, before the change. It was 5 at 14:15, with db_pool_waiting at 37.",
+        "evidence_ids": [
+          "metric:inc02:pool:0001",
+          "metric:inc02:pool:0002",
+          "metric:inc02:pool:0003"
+        ]
+      },
+      {
+        "statement": "orders-db CPU was low during the incident: 18% at 14:15 and 16.5% at 14:25.",
+        "evidence_ids": [
+          "metric:inc02:dbcpu:0001",
+          "metric:inc02:dbcpu:0002"
+        ]
+      },
+      {
+        "statement": "orders-api depends on orders-db, inventory-svc and settings-service.",
+        "evidence_ids": [
+          "dependency:inc02:0001",
+          "dependency:inc02:0002",
+          "dependency:inc02:0003"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "Order history pages are probably unaffected because they use a different path, such as a read replica or cache, and do not compete for the same pool.",
+        "basis": "The incident report says history loads normally. The pool errors cite only POST /orders.",
+        "how_to_verify": "Check the orders-api code and config to see which data source the history endpoints use."
+      },
+      {
+        "statement": "inventory-svc and settings-service are healthy.",
+        "basis": "Neither service was queried. The errors point to the local DB pool, not to downstream calls.",
+        "how_to_verify": "Pull metrics and logs for inventory-svc and settings-service for 14:00-14:45."
+      },
+      {
+        "statement": "There is no orders-db CPU baseline before 14:15. Low CPU suggests the DB is not saturated, but I have not compared it with normal levels.",
+        "basis": "The orders-db metrics query returned only two samples.",
+        "how_to_verify": "Query orders-db metrics for 13:00-14:10, including query latency and locks."
+      },
+      {
+        "statement": "It is unknown whether the new CSV export endpoint holds DB connections for a long time.",
+        "basis": "I did not inspect non-ERROR logs or per-endpoint metrics.",
+        "how_to_verify": "Check orders-api INFO logs and per-endpoint connection hold time for the export endpoint."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Revert orders-api db.pool.max_connections from 5 back to 50, through the normal config rollout path.",
+        "rationale": "The 14:10 change cut the pool to 5, below the observed demand of 11 active connections at 14:05. Pool saturation, 5s acquisition timeouts, 503s and p99 above 8s all follow this change, and nothing contradicts it.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "After the revert, watch for 15–30 minutes: pool active/waiting connections, acquisition-timeout log rate, POST /orders p99 latency, and 503 rate. Compare against the pre-14:10 baseline.",
+        "rationale": "This confirms the revert actually resolved the incident. Pool waiters should drop to near zero and p99 and the 503 rate should return to baseline. If they do not, the pool-size explanation is incomplete.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Add validation or a review gate for db.pool.max_connections changes, for example a minimum threshold tied to observed peak concurrent demand, and include this in the post-incident review.",
+        "rationale": "A single config change dropped capacity below normal demand without being caught. A guardrail would prevent a repeat.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Check DB connection hold times for the new v4.12.0 bulk CSV export endpoint, using per-endpoint connection usage or query duration. If order latency or 503s persist after the pool revert, consider disabling the endpoint behind a feature flag.",
+        "rationale": "The p99 timing and the config evidence contradict this hypothesis. Still, a long-running export holding connections could add pool pressure even at 50 connections, and this check is cheap.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Do not roll back the orders-db autovacuum change now. Re-examine it only if DB query latency or CPU shows degradation after the pool revert.",
+        "rationale": "DB CPU and p99 metrics contradict autovacuum as the cause. The change was made at 13:40, but symptoms began around 14:12. Low confidence (0.05) does not justify a change to the database.",
+        "hypothesis_id": "H3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 6,
+      "llm_calls": 8,
+      "tokens_in": 17532,
+      "tokens_out": 3511,
+      "cache_tokens": 0,
+      "latency_s": 39.196
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "dependencies gap in baseline: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  }
+}

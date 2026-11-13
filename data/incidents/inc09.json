@@ -1,0 +1,53 @@
+{
+  "id": "inc09",
+  "report": {
+    "title": "Push notifications delayed overnight",
+    "symptoms": [
+      "Push notifications arrived 20 to 45 minutes late between about 02:15 and 03:00 UTC",
+      "Delivery returned to normal on its own around 03:00 UTC",
+      "No customer-facing errors were reported"
+    ],
+    "affected_service": "notification-svc",
+    "window_start": "2026-11-18T02:00:00Z",
+    "window_end": "2026-11-18T03:30:00Z",
+    "severity": "SEV3"
+  },
+  "logs": [
+    {"id": "log:inc09:0001", "timestamp": "2026-11-18T02:05:12Z", "service": "notification-svc", "level": "INFO", "message": "Delivered 3,210 pushes in last 60s, consumer lag 0.4s"},
+    {"id": "log:inc09:0002", "timestamp": "2026-11-18T02:11:30Z", "service": "notification-svc", "level": "INFO", "message": "Starting notification-svc v3.3.0"},
+    {"id": "log:inc09:0003", "timestamp": "2026-11-18T02:13:05Z", "service": "notification-svc", "level": "WARN", "message": "Consumer lag rising: 38s"},
+    {"id": "log:inc09:0004", "timestamp": "2026-11-18T02:14:00Z", "service": "log-shipper", "level": "ERROR", "message": "Buffer overflow on node pool np-workers-3: dropping logs for notification-svc, queue-broker"},
+    {"id": "log:inc09:0005", "timestamp": "2026-11-18T02:15:41Z", "service": "push-gateway", "level": "WARN", "message": "pushcloud responded 429 once for batch b-77120 (retried successfully)"},
+    {"id": "log:inc09:0006", "timestamp": "2026-11-18T02:58:30Z", "service": "log-shipper", "level": "INFO", "message": "Buffer drained on np-workers-3; resumed shipping (44m of logs lost)"},
+    {"id": "log:inc09:0007", "timestamp": "2026-11-18T02:59:10Z", "service": "notification-svc", "level": "INFO", "message": "Consumer group rebalanced (3 members), lag 1,940s and falling"},
+    {"id": "log:inc09:0008", "timestamp": "2026-11-18T03:06:00Z", "service": "notification-svc", "level": "INFO", "message": "Delivered 9,880 pushes in last 60s, consumer lag 2s"}
+  ],
+  "metrics": [
+    {"id": "metric:inc09:depth:0001", "timestamp": "2026-11-18T02:10:00Z", "service": "queue-broker", "name": "notifications_queue_depth", "value": 1200.0},
+    {"id": "metric:inc09:depth:0002", "timestamp": "2026-11-18T02:30:00Z", "service": "queue-broker", "name": "notifications_queue_depth", "value": 94000.0},
+    {"id": "metric:inc09:depth:0003", "timestamp": "2026-11-18T02:55:00Z", "service": "queue-broker", "name": "notifications_queue_depth", "value": 151000.0},
+    {"id": "metric:inc09:depth:0004", "timestamp": "2026-11-18T03:10:00Z", "service": "queue-broker", "name": "notifications_queue_depth", "value": 4100.0},
+    {"id": "metric:inc09:cpu:0001", "timestamp": "2026-11-18T02:30:00Z", "service": "notification-svc", "name": "cpu_pct", "value": 11.0},
+    {"id": "metric:inc09:sent:0001", "timestamp": "2026-11-18T02:30:00Z", "service": "push-gateway", "name": "pushes_sent_per_s", "value": 14.0},
+    {"id": "metric:inc09:sent:0002", "timestamp": "2026-11-18T03:05:00Z", "service": "push-gateway", "name": "pushes_sent_per_s", "value": 165.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc09:0001", "timestamp": "2026-11-18T02:10:00Z", "service": "notification-svc", "version": "v3.3.0", "description": "Template rendering refactor; bump queue client library"}
+  ],
+  "config_changes": [
+    {"id": "config:inc09:0001", "timestamp": "2026-11-18T02:12:00Z", "service": "queue-broker", "key": "consumer.max_inflight", "old_value": "500", "new_value": "200"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc09:0001", "service": "notification-svc", "depends_on": "queue-broker"},
+    {"id": "dependency:inc09:0002", "service": "notification-svc", "depends_on": "push-gateway"},
+    {"id": "dependency:inc09:0003", "service": "push-gateway", "depends_on": "pushcloud"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc09:0001", "title": "Notification backlog after broker tuning", "tags": ["notifications", "queue", "broker"], "root_cause": "Lowering consumer inflight limits throttled delivery", "resolution": "Restored the broker setting"},
+    {"id": "past:inc09:0002", "title": "Push delays from provider throttling", "tags": ["notifications", "push", "provider"], "root_cause": "The push provider throttled sends during a campaign", "resolution": "Spread the campaign over an hour"}
+  ],
+  "failure_schedule": [
+    {"tool": "logs", "call_index": 1, "mode": "partial", "partial_fraction": 0.5},
+    {"tool": "metrics", "call_index": 2, "mode": "timeout"}
+  ]
+}

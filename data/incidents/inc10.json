@@ -1,0 +1,61 @@
+{
+  "id": "inc10",
+  "report": {
+    "title": "Shipping quotes failing at checkout",
+    "symptoms": [
+      "About 40% of shipping quote requests fail since about 12:00 UTC",
+      "Failures eased around 12:30 UTC, then came back",
+      "Customers see 'shipping unavailable' and abandon checkout"
+    ],
+    "affected_service": "shipping-svc",
+    "window_start": "2026-11-19T11:30:00Z",
+    "window_end": "2026-11-19T13:00:00Z",
+    "severity": "SEV2"
+  },
+  "logs": [
+    {"id": "log:inc10:0001", "timestamp": "2026-11-19T11:56:20Z", "service": "shipping-svc", "level": "INFO", "message": "Starting shipping-svc v5.2.0"},
+    {"id": "log:inc10:0002", "timestamp": "2026-11-19T11:58:00Z", "service": "marketing-svc", "level": "INFO", "message": "Campaign 'Black Week early access' email sent to 1.2M recipients"},
+    {"id": "log:inc10:0003", "timestamp": "2026-11-19T12:01:14Z", "service": "shipping-svc", "level": "ERROR", "message": "POST /quotes 502: parcelhub-api POST /v2/rates returned 429 Too Many Requests (X-RateLimit-Limit: 600/min, X-RateLimit-Remaining: 0, Retry-After: 41)"},
+    {"id": "log:inc10:0004", "timestamp": "2026-11-19T12:02:30Z", "service": "shipping-svc", "level": "WARN", "message": "v5.2.0 carrier-selection: unknown carrier code 'PHX' in rate response, skipping"},
+    {"id": "log:inc10:0005", "timestamp": "2026-11-19T12:04:52Z", "service": "shipping-svc", "level": "ERROR", "message": "POST /quotes 502: parcelhub-api POST /v2/rates returned 429 Too Many Requests (X-RateLimit-Remaining: 0, Retry-After: 18)"},
+    {"id": "log:inc10:0006", "timestamp": "2026-11-19T12:15:40Z", "service": "shipping-svc", "level": "ERROR", "message": "POST /quotes 502: parcelhub-api POST /v2/rates returned 429 Too Many Requests (X-RateLimit-Remaining: 0, Retry-After: 33)"},
+    {"id": "log:inc10:0007", "timestamp": "2026-11-19T12:28:05Z", "service": "shipping-svc", "level": "INFO", "message": "Starting shipping-svc v5.1.4 (rollback)"},
+    {"id": "log:inc10:0008", "timestamp": "2026-11-19T12:41:22Z", "service": "shipping-svc", "level": "ERROR", "message": "POST /quotes 502: parcelhub-api POST /v2/rates returned 429 Too Many Requests (X-RateLimit-Remaining: 0, Retry-After: 52)"},
+    {"id": "log:inc10:0009", "timestamp": "2026-11-19T12:44:10Z", "service": "parcelhub-api", "level": "INFO", "message": "Status page: all systems operational"},
+    {"id": "log:inc10:0010", "timestamp": "2026-11-19T12:47:35Z", "service": "shipping-svc", "level": "ERROR", "message": "POST /quotes 502: parcelhub-api POST /v2/rates returned 429 Too Many Requests (X-RateLimit-Remaining: 0, Retry-After: 25)"}
+  ],
+  "metrics": [
+    {"id": "metric:inc10:err:0001", "timestamp": "2026-11-19T11:50:00Z", "service": "shipping-svc", "name": "error_rate_pct", "value": 0.3},
+    {"id": "metric:inc10:err:0002", "timestamp": "2026-11-19T12:10:00Z", "service": "shipping-svc", "name": "error_rate_pct", "value": 41.0},
+    {"id": "metric:inc10:err:0003", "timestamp": "2026-11-19T12:30:00Z", "service": "shipping-svc", "name": "error_rate_pct", "value": 7.5},
+    {"id": "metric:inc10:err:0004", "timestamp": "2026-11-19T12:45:00Z", "service": "shipping-svc", "name": "error_rate_pct", "value": 38.0},
+    {"id": "metric:inc10:rpm:0001", "timestamp": "2026-11-19T11:50:00Z", "service": "shipping-svc", "name": "parcelhub_requests_per_min", "value": 370.0},
+    {"id": "metric:inc10:rpm:0002", "timestamp": "2026-11-19T12:10:00Z", "service": "shipping-svc", "name": "parcelhub_requests_per_min", "value": 600.0},
+    {"id": "metric:inc10:rpm:0003", "timestamp": "2026-11-19T12:30:00Z", "service": "shipping-svc", "name": "parcelhub_requests_per_min", "value": 540.0},
+    {"id": "metric:inc10:rpm:0004", "timestamp": "2026-11-19T12:45:00Z", "service": "shipping-svc", "name": "parcelhub_requests_per_min", "value": 600.0},
+    {"id": "metric:inc10:quotes:0001", "timestamp": "2026-11-19T11:50:00Z", "service": "shipping-svc", "name": "quote_requests_per_min", "value": 365.0},
+    {"id": "metric:inc10:quotes:0002", "timestamp": "2026-11-19T12:10:00Z", "service": "shipping-svc", "name": "quote_requests_per_min", "value": 1010.0},
+    {"id": "metric:inc10:quotes:0003", "timestamp": "2026-11-19T12:30:00Z", "service": "shipping-svc", "name": "quote_requests_per_min", "value": 580.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc10:0001", "timestamp": "2026-11-19T11:20:00Z", "service": "marketing-svc", "version": "v9.4.1", "description": "Schedule Black Week early-access campaign"},
+    {"id": "deploy:inc10:0002", "timestamp": "2026-11-19T11:55:00Z", "service": "shipping-svc", "version": "v5.2.0", "description": "Carrier selection support in rate responses"},
+    {"id": "deploy:inc10:0003", "timestamp": "2026-11-19T12:27:00Z", "service": "shipping-svc", "version": "v5.1.4", "description": "Rollback of v5.2.0"}
+  ],
+  "config_changes": [
+    {"id": "config:inc10:0001", "timestamp": "2026-11-19T12:05:00Z", "service": "shipping-svc", "key": "log.level", "old_value": "info", "new_value": "debug"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc10:0001", "service": "shipping-svc", "depends_on": "parcelhub-api"},
+    {"id": "dependency:inc10:0002", "service": "checkout-web", "depends_on": "shipping-svc"},
+    {"id": "dependency:inc10:0003", "service": "shipping-svc", "depends_on": "address-svc"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc10:0001", "title": "Shipping quote errors after carrier integration release", "tags": ["shipping", "deploy", "rollback"], "root_cause": "A release mis-parsed carrier rate responses", "resolution": "Rolled back shipping-svc"},
+    {"id": "past:inc10:0002", "title": "Shipping quotes failing during holiday peak", "tags": ["shipping", "parcelhub", "traffic"], "root_cause": "Quote traffic exceeded the carrier API plan limit", "resolution": "Cached quotes per basket and raised the plan tier"}
+  ],
+  "failure_schedule": [
+    {"tool": "deploys", "call_index": 1, "mode": "partial", "partial_fraction": 0.5},
+    {"tool": "past_incidents", "call_index": 1, "mode": "error"}
+  ]
+}

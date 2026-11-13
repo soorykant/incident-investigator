@@ -1,0 +1,64 @@
+{
+  "id": "inc02",
+  "report": {
+    "title": "Order placement slow and timing out",
+    "symptoms": [
+      "p99 latency for POST /orders above 8 s since about 14:12 UTC",
+      "About 15% of order requests return HTTP 503",
+      "Order history pages load normally"
+    ],
+    "affected_service": "orders-api",
+    "window_start": "2026-11-11T13:50:00Z",
+    "window_end": "2026-11-11T14:45:00Z",
+    "severity": "SEV2"
+  },
+  "logs": [
+    {"id": "log:inc02:0001", "timestamp": "2026-11-11T13:55:04Z", "service": "orders-api", "level": "INFO", "message": "POST /orders 201 in 84ms"},
+    {"id": "log:inc02:0002", "timestamp": "2026-11-11T14:05:40Z", "service": "orders-api", "level": "INFO", "message": "Starting orders-api v4.12.0 (3/3 pods ready)"},
+    {"id": "log:inc02:0003", "timestamp": "2026-11-11T14:07:12Z", "service": "orders-api", "level": "INFO", "message": "Export job 7731 started: CSV export of 41,200 orders for merchant m-2210"},
+    {"id": "log:inc02:0004", "timestamp": "2026-11-11T14:09:55Z", "service": "orders-api", "level": "INFO", "message": "POST /orders 201 in 91ms"},
+    {"id": "log:inc02:0005", "timestamp": "2026-11-11T14:10:31Z", "service": "orders-api", "level": "INFO", "message": "Reloaded runtime settings from settings-service (1 key changed: db.pool.max_connections)"},
+    {"id": "log:inc02:0006", "timestamp": "2026-11-11T14:12:03Z", "service": "orders-api", "level": "WARN", "message": "Waited 2500ms for a DB connection (active=5/5, waiting=18)"},
+    {"id": "log:inc02:0007", "timestamp": "2026-11-11T14:12:47Z", "service": "orders-api", "level": "ERROR", "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=37)"},
+    {"id": "log:inc02:0008", "timestamp": "2026-11-11T14:13:30Z", "service": "orders-db", "level": "WARN", "message": "autovacuum: VACUUM public.orders running for 312s"},
+    {"id": "log:inc02:0009", "timestamp": "2026-11-11T14:14:10Z", "service": "orders-api", "level": "ERROR", "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=41)"},
+    {"id": "log:inc02:0010", "timestamp": "2026-11-11T14:15:02Z", "service": "orders-db", "level": "INFO", "message": "connections: 9 active of 400 allowed; slowest query in last 60s 38ms"},
+    {"id": "log:inc02:0011", "timestamp": "2026-11-11T14:18:20Z", "service": "orders-api", "level": "INFO", "message": "Export job 7731 finished in 11m08s"},
+    {"id": "log:inc02:0012", "timestamp": "2026-11-11T14:21:44Z", "service": "orders-api", "level": "ERROR", "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=33)"},
+    {"id": "log:inc02:0013", "timestamp": "2026-11-11T14:22:15Z", "service": "orders-api", "level": "WARN", "message": "GET /orders/history served from read replica in 120ms"},
+    {"id": "log:inc02:0014", "timestamp": "2026-11-11T14:30:02Z", "service": "orders-api", "level": "ERROR", "message": "POST /orders 503: timeout acquiring connection from pool after 5000ms (active=5/5, waiting=39)"}
+  ],
+  "metrics": [
+    {"id": "metric:inc02:p99:0001", "timestamp": "2026-11-11T14:00:00Z", "service": "orders-api", "name": "p99_latency_ms", "value": 140.0},
+    {"id": "metric:inc02:p99:0002", "timestamp": "2026-11-11T14:10:00Z", "service": "orders-api", "name": "p99_latency_ms", "value": 165.0},
+    {"id": "metric:inc02:p99:0003", "timestamp": "2026-11-11T14:15:00Z", "service": "orders-api", "name": "p99_latency_ms", "value": 8420.0},
+    {"id": "metric:inc02:p99:0004", "timestamp": "2026-11-11T14:25:00Z", "service": "orders-api", "name": "p99_latency_ms", "value": 8110.0},
+    {"id": "metric:inc02:pool:0001", "timestamp": "2026-11-11T14:05:00Z", "service": "orders-api", "name": "db_pool_active", "value": 11.0},
+    {"id": "metric:inc02:pool:0002", "timestamp": "2026-11-11T14:15:00Z", "service": "orders-api", "name": "db_pool_active", "value": 5.0},
+    {"id": "metric:inc02:pool:0003", "timestamp": "2026-11-11T14:15:00Z", "service": "orders-api", "name": "db_pool_waiting", "value": 37.0},
+    {"id": "metric:inc02:dbcpu:0001", "timestamp": "2026-11-11T14:15:00Z", "service": "orders-db", "name": "cpu_pct", "value": 18.0},
+    {"id": "metric:inc02:dbcpu:0002", "timestamp": "2026-11-11T14:25:00Z", "service": "orders-db", "name": "cpu_pct", "value": 16.5}
+  ],
+  "deploys": [
+    {"id": "deploy:inc02:0001", "timestamp": "2026-11-11T14:05:00Z", "service": "orders-api", "version": "v4.12.0", "description": "Add bulk CSV order export endpoint for merchants"},
+    {"id": "deploy:inc02:0002", "timestamp": "2026-11-11T11:30:00Z", "service": "inventory-svc", "version": "v2.8.3", "description": "Dependency upgrades"}
+  ],
+  "config_changes": [
+    {"id": "config:inc02:0001", "timestamp": "2026-11-11T14:10:00Z", "service": "orders-api", "key": "db.pool.max_connections", "old_value": "50", "new_value": "5"},
+    {"id": "config:inc02:0002", "timestamp": "2026-11-11T13:40:00Z", "service": "orders-db", "key": "autovacuum_vacuum_scale_factor", "old_value": "0.2", "new_value": "0.05"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc02:0001", "service": "orders-api", "depends_on": "orders-db"},
+    {"id": "dependency:inc02:0002", "service": "orders-api", "depends_on": "inventory-svc"},
+    {"id": "dependency:inc02:0003", "service": "orders-api", "depends_on": "settings-service"},
+    {"id": "dependency:inc02:0004", "service": "storefront", "depends_on": "orders-api"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc02:0001", "title": "Orders latency after release added N+1 queries", "tags": ["orders", "latency", "deploy", "database"], "root_cause": "A release introduced an N+1 query in order creation", "resolution": "Rolled back the release and batched the queries"},
+    {"id": "past:inc02:0002", "title": "Orders database slow during long autovacuum", "tags": ["orders", "database", "vacuum"], "root_cause": "Autovacuum on the orders table held locks and raised query latency", "resolution": "Tuned autovacuum thresholds and scheduled manual vacuums off-peak"}
+  ],
+  "failure_schedule": [
+    {"tool": "dependencies", "call_index": 1, "mode": "error"},
+    {"tool": "logs", "call_index": 2, "mode": "partial", "partial_fraction": 0.5}
+  ]
+}

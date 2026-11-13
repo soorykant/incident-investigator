@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc05",
+  "expected_outcome": "root_cause",
+  "service": "ledger-api",
+  "category": "cert_dns",
+  "key_evidence_ids": ["log:inc05:0005", "log:inc05:0007", "log:inc05:0011", "metric:inc05:certdays:0002", "dependency:inc05:0003"],
+  "traps": [
+    {
+      "description": "mobile-bff v7.1.0 upgraded its HTTP client two hours earlier, the client logs handshake retries, and a past incident blames exactly that kind of upgrade; but v7.1.0 served balances fine until midnight and batch-settlement, which was not deployed, fails the same way",
+      "misleading_evidence_ids": ["deploy:inc05:0001", "log:inc05:0006", "past:inc05:0001"]
+    },
+    {
+      "description": "mobile-bff raised its minimum TLS version 30 minutes before the failures, a very tempting TLS change; but requests succeeded for 29 minutes after it and the error says the certificate expired, not that the protocol version was rejected",
+      "misleading_evidence_ids": ["config:inc05:0001", "log:inc05:0002"]
+    }
+  ]
+}

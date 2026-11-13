@@ -1,0 +1,294 @@
+{
+  "incident_id": "inc06",
+  "incident": {
+    "title": "Stock lookups slow on product and cart pages",
+    "symptoms": [
+      "inventory-svc p99 latency above 5 s since about 10:18 UTC",
+      "Cart page sometimes shows 'stock unavailable'",
+      "A flash sale is running this morning"
+    ],
+    "affected_service": "inventory-svc",
+    "window_start": "2026-11-15T09:50:00Z",
+    "window_end": "2026-11-15T11:15:00Z",
+    "severity": "SEV2"
+  },
+  "started_at": "2026-11-13T06:59:12.865634Z",
+  "tasks": [],
+  "findings": [],
+  "evidence": [
+    {
+      "id": "deploy:inc06:0003",
+      "kind": "deploy",
+      "timestamp": "2026-11-15T08:00:00Z",
+      "payload": {
+        "service": "promo-svc",
+        "version": "v1.22.0",
+        "description": "Flash sale FS-118 banners"
+      }
+    },
+    {
+      "id": "config:inc06:0001",
+      "kind": "config",
+      "timestamp": "2026-11-15T09:55:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "key": "autoscaler.max_replicas",
+        "old_value": "12",
+        "new_value": "20"
+      }
+    },
+    {
+      "id": "deploy:inc06:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-15T10:14:00Z",
+      "payload": {
+        "service": "inventory-db",
+        "version": "migration-0142",
+        "description": "Rebuild stock_levels table; drop idx_stock_sku_warehouse (superseded by 0143)"
+      }
+    },
+    {
+      "id": "deploy:inc06:0002",
+      "kind": "deploy",
+      "timestamp": "2026-11-15T10:30:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "version": "v2.9.0",
+        "description": "Add reservation cache"
+      }
+    },
+    {
+      "id": "log:inc06:0002",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:14:20Z",
+      "payload": {
+        "service": "inventory-db",
+        "level": "INFO",
+        "message": "migration 0142 started: rebuild stock_levels, drop idx_stock_sku_warehouse"
+      }
+    },
+    {
+      "id": "log:inc06:0003",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:16:55Z",
+      "payload": {
+        "service": "inventory-db",
+        "level": "INFO",
+        "message": "migration 0142 finished in 2m35s; migration 0143 (create idx_stock_sku_wh_v2) pending"
+      }
+    },
+    {
+      "id": "log:inc06:0004",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:18:02Z",
+      "payload": {
+        "service": "inventory-db",
+        "level": "WARN",
+        "message": "slow query 4812ms: SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2 (Seq Scan on stock_levels, rows=8.2M)"
+      }
+    },
+    {
+      "id": "log:inc06:0006",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:21:13Z",
+      "payload": {
+        "service": "inventory-db",
+        "level": "WARN",
+        "message": "slow query 5230ms: SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2 (Seq Scan on stock_levels, rows=8.2M)"
+      }
+    },
+    {
+      "id": "log:inc06:0007",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:24:50Z",
+      "payload": {
+        "service": "inventory-db",
+        "level": "WARN",
+        "message": "CPU 96%: 212 active queries, top statement SELECT qty FROM stock_levels"
+      }
+    },
+    {
+      "id": "metric:inc06:p99:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-15T10:00:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "name": "p99_latency_ms",
+        "value": 85.0
+      }
+    },
+    {
+      "id": "metric:inc06:p99:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-15T10:10:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "name": "p99_latency_ms",
+        "value": 92.0
+      }
+    },
+    {
+      "id": "metric:inc06:p99:0003",
+      "kind": "metric",
+      "timestamp": "2026-11-15T10:20:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "name": "p99_latency_ms",
+        "value": 5100.0
+      }
+    },
+    {
+      "id": "metric:inc06:p99:0004",
+      "kind": "metric",
+      "timestamp": "2026-11-15T10:40:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "name": "p99_latency_ms",
+        "value": 5020.0
+      }
+    },
+    {
+      "id": "log:inc06:0005",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:18:40Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "ERROR",
+        "message": "GET /stock/sku-55120 504: inventory-db query timeout after 5000ms"
+      }
+    },
+    {
+      "id": "log:inc06:0008",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:31:30Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "INFO",
+        "message": "Starting inventory-svc v2.9.0 (reservation cache enabled)"
+      }
+    },
+    {
+      "id": "log:inc06:0009",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:33:05Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "WARN",
+        "message": "Reservation cache miss ratio 100% (warming)"
+      }
+    },
+    {
+      "id": "log:inc06:0010",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:36:41Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "ERROR",
+        "message": "GET /stock/sku-10233 504: inventory-db query timeout after 5000ms"
+      }
+    },
+    {
+      "id": "log:inc06:0011",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:45:00Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "WARN",
+        "message": "Autoscaler added 4 replicas (CPU 22%, waiting on DB)"
+      }
+    },
+    {
+      "id": "log:inc06:0012",
+      "kind": "log",
+      "timestamp": "2026-11-15T10:52:12Z",
+      "payload": {
+        "service": "inventory-svc",
+        "level": "ERROR",
+        "message": "GET /stock/sku-88001 504: inventory-db query timeout after 5000ms"
+      }
+    }
+  ],
+  "hypotheses": [],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "metrics",
+      "reason": "partial result: 4 of 6 rows missing",
+      "service": "inventory-svc",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1"
+  ],
+  "failures": [
+    {
+      "agent": "baseline",
+      "task_id": "baseline",
+      "reason": "ActionParseError: finish.assumptions.1.badge_note_removed: Extra inputs are not permitted (reply began: '{\"action\": \"finish\", \"facts\": [{\"statement\": \"Migration 0142 on inventory-db was deployed at 10:14 UTC. It rebuilt the stock_levels table and dropped idx_stock_sku_warehouse, which it describes as sup...')",
+      "attempts": 2
+    }
+  ],
+  "counters": {
+    "tool_calls": 5,
+    "llm_calls": 7,
+    "tokens_in": 20053,
+    "tokens_out": 4581,
+    "cache_tokens": 0,
+    "llm_latency_s": 43.759
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T06:59:12.865684Z",
+      "ended_at": "2026-11-13T06:59:56.630486Z",
+      "status": "failed",
+      "tool_calls": 5,
+      "llm_calls": 7
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc06",
+    "outcome": "INCONCLUSIVE",
+    "ranked_hypotheses": [],
+    "facts": [],
+    "assumptions": [],
+    "recommended_actions": [],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 5,
+      "llm_calls": 7,
+      "tokens_in": 20053,
+      "tokens_out": 4581,
+      "cache_tokens": 0,
+      "latency_s": 43.765
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in baseline: partial result: 4 of 6 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": [
+      {
+        "agent": "baseline",
+        "task_id": "baseline",
+        "reason": "ActionParseError: finish.assumptions.1.badge_note_removed: Extra inputs are not permitted (reply began: '{\"action\": \"finish\", \"facts\": [{\"statement\": \"Migration 0142 on inventory-db was deployed at 10:14 UTC. It rebuilt the stock_levels table and dropped idx_stock_sku_warehouse, which it describes as sup...')",
+        "attempts": 2
+      }
+    ]
+  }
+}

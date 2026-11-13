@@ -1,0 +1,556 @@
+{
+  "incident_id": "inc04",
+  "incident": {
+    "title": "Image uploads failing in waves",
+    "symptoms": [
+      "About 25% of image upload requests fail with HTTP 502 since about 03:20 UTC",
+      "Failures come in bursts a few minutes apart",
+      "Already-uploaded images still display"
+    ],
+    "affected_service": "image-resizer",
+    "window_start": "2026-11-13T02:45:00Z",
+    "window_end": "2026-11-13T04:00:00Z",
+    "severity": "SEV3"
+  },
+  "started_at": "2026-11-13T06:52:51.993437Z",
+  "tasks": [],
+  "findings": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "facts": [
+        {
+          "statement": "image-resizer containers were OOMKilled at 03:19:51 (pod image-resizer-7c9-2) and 03:24:37 (pod image-resizer-7c9-4). Each was at the 4096Mi limit after 117h of uptime.",
+          "evidence_ids": [
+            "log:inc04:0005",
+            "log:inc04:0007"
+          ]
+        },
+        {
+          "statement": "Max RSS memory in image-resizer was 3890 MiB at 03:00 and 4060 MiB at 03:15, close to the 4096Mi limit.",
+          "evidence_ids": [
+            "metric:inc04:mem:0004",
+            "metric:inc04:mem:0005",
+            "log:inc04:0005"
+          ]
+        },
+        {
+          "statement": "oom_kills_total for image-resizer was 3 at 03:35.",
+          "evidence_ids": [
+            "metric:inc04:oom:0001"
+          ]
+        },
+        {
+          "statement": "image-resizer request rate barely changed: 212 rps at 02:45 and 219 rps at 03:15.",
+          "evidence_ids": [
+            "metric:inc04:rps:0001",
+            "metric:inc04:rps:0002"
+          ]
+        },
+        {
+          "statement": "upload-api returned 502 with 'image-resizer connection reset by peer' at 03:20:05 and 03:31:20. The first came about 14s after the first OOMKill.",
+          "evidence_ids": [
+            "log:inc04:0006",
+            "log:inc04:0010",
+            "log:inc04:0005"
+          ]
+        },
+        {
+          "statement": "thumbnail-cache v2.0.0 was deployed at 02:50, switching eviction from LRU to LFU. At 02:52:30 it logged a cold start with a 12% hit ratio (normal 85%).",
+          "evidence_ids": [
+            "deploy:inc04:0001",
+            "log:inc04:0001"
+          ]
+        },
+        {
+          "statement": "upload-api calls image-resizer, and image-resizer calls thumbnail-cache and blob-store.",
+          "evidence_ids": [
+            "dependency:inc04:0001",
+            "dependency:inc04:0002",
+            "dependency:inc04:0003"
+          ]
+        },
+        {
+          "statement": "No image-resizer deploy was recorded between 2026-11-12 00:00 and 04:00 on the incident day. The only deploy in the window was thumbnail-cache.",
+          "evidence_ids": [
+            "deploy:inc04:0001"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "statement": "The bursts of 502s match individual pod OOMKill/restart events.",
+          "basis": "Error timestamps closely follow the OOMKill times, and failures are periodic.",
+          "how_to_verify": "Pull the full image-resizer logs for 03:25-04:00 and the pod restart events, then line them up with upload-api 502 timestamps."
+        },
+        {
+          "statement": "image-resizer memory grows slowly over time (a leak), so pods hit the limit at about 117h of uptime.",
+          "basis": "Both killed pods had the same 117h uptime and there was no recent deploy. However, the memory query for before 02:45 returned nothing, so the long-term trend is unconfirmed.",
+          "how_to_verify": "Get the memory_rss trend per pod over the last 5 days. Check whether recently restarted pods stay stable."
+        },
+        {
+          "statement": "Missing data: metrics for thumbnail-cache and blob-store, blob-store logs, and pre-incident image-resizer memory all came back empty. Early image-resizer log queries timed out (gaps 1 and 2 were later closed by a narrower query).",
+          "basis": "Tool results.",
+          "how_to_verify": "Re-query those sources, or use an alternative monitoring source."
+        },
+        {
+          "statement": "Already-uploaded images still display, which points to a failure in the write/resize path rather than in serving.",
+          "basis": "Incident symptoms.",
+          "how_to_verify": "Check the read-path error rates."
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "deploy:inc04:0001",
+      "kind": "deploy",
+      "timestamp": "2026-11-13T02:50:00Z",
+      "payload": {
+        "service": "thumbnail-cache",
+        "version": "v2.0.0",
+        "description": "Switch eviction policy from LRU to LFU"
+      }
+    },
+    {
+      "id": "metric:inc04:rps:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-13T02:45:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "requests_per_s",
+        "value": 212.0
+      }
+    },
+    {
+      "id": "metric:inc04:mem:0004",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:00:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "memory_rss_mib_max",
+        "value": 3890.0
+      }
+    },
+    {
+      "id": "metric:inc04:mem:0005",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:15:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "memory_rss_mib_max",
+        "value": 4060.0
+      }
+    },
+    {
+      "id": "metric:inc04:rps:0002",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:15:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "requests_per_s",
+        "value": 219.0
+      }
+    },
+    {
+      "id": "metric:inc04:oom:0001",
+      "kind": "metric",
+      "timestamp": "2026-11-13T03:35:00Z",
+      "payload": {
+        "service": "image-resizer",
+        "name": "oom_kills_total",
+        "value": 3.0
+      }
+    },
+    {
+      "id": "dependency:inc04:0001",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "upload-api",
+        "depends_on": "image-resizer"
+      }
+    },
+    {
+      "id": "dependency:inc04:0002",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "image-resizer",
+        "depends_on": "thumbnail-cache"
+      }
+    },
+    {
+      "id": "dependency:inc04:0003",
+      "kind": "dependency",
+      "timestamp": null,
+      "payload": {
+        "service": "image-resizer",
+        "depends_on": "blob-store"
+      }
+    },
+    {
+      "id": "log:inc04:0001",
+      "kind": "log",
+      "timestamp": "2026-11-13T02:52:30Z",
+      "payload": {
+        "service": "thumbnail-cache",
+        "level": "WARN",
+        "message": "Cold start after deploy: hit ratio 12% (normal 85%)"
+      }
+    },
+    {
+      "id": "log:inc04:0006",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:20:05Z",
+      "payload": {
+        "service": "upload-api",
+        "level": "ERROR",
+        "message": "POST /images 502: image-resizer connection reset by peer"
+      }
+    },
+    {
+      "id": "log:inc04:0010",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:31:20Z",
+      "payload": {
+        "service": "upload-api",
+        "level": "ERROR",
+        "message": "POST /images 502: image-resizer connection reset by peer"
+      }
+    },
+    {
+      "id": "log:inc04:0005",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:19:51Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "ERROR",
+        "message": "Container image-resizer in pod image-resizer-7c9-2 OOMKilled (limit 4096Mi, uptime 117h)"
+      }
+    },
+    {
+      "id": "log:inc04:0007",
+      "kind": "log",
+      "timestamp": "2026-11-13T03:24:37Z",
+      "payload": {
+        "service": "image-resizer",
+        "level": "ERROR",
+        "message": "Container image-resizer in pod image-resizer-7c9-4 OOMKilled (limit 4096Mi, uptime 117h)"
+      }
+    }
+  ],
+  "hypotheses": [
+    {
+      "id": "H1",
+      "service": "image-resizer",
+      "category": "capacity",
+      "summary": "A slow memory leak or memory exhaustion in image-resizer: pods reach the 4096Mi limit after about 117h of uptime and get OOMKilled one by one. In-flight requests are reset, and upload-api returns 502s in bursts.",
+      "supporting_ids": [
+        "log:inc04:0005",
+        "log:inc04:0007",
+        "metric:inc04:mem:0004",
+        "metric:inc04:mem:0005",
+        "metric:inc04:oom:0001",
+        "log:inc04:0006",
+        "log:inc04:0010",
+        "metric:inc04:rps:0001",
+        "metric:inc04:rps:0002"
+      ],
+      "contradicting_ids": [
+        "deploy:inc04:0001"
+      ],
+      "proposed_confidence": 0.65,
+      "final_confidence": null
+    },
+    {
+      "id": "H2",
+      "service": "thumbnail-cache",
+      "category": "bad_deploy",
+      "summary": "The thumbnail-cache v2.0.0 deploy (LRU to LFU) cold-started the cache with a 12% hit ratio. Cache misses pushed more resize work and memory onto image-resizer, tipping already-high pods into OOM about 30 minutes later.",
+      "supporting_ids": [
+        "deploy:inc04:0001",
+        "log:inc04:0001",
+        "dependency:inc04:0002",
+        "metric:inc04:mem:0005"
+      ],
+      "contradicting_ids": [
+        "metric:inc04:rps:0001",
+        "metric:inc04:rps:0002",
+        "log:inc04:0005",
+        "log:inc04:0007"
+      ],
+      "proposed_confidence": 0.3,
+      "final_confidence": null
+    },
+    {
+      "id": "H3",
+      "service": "blob-store",
+      "category": "dependency_failure",
+      "summary": "blob-store slowness makes image-resizer buffer images in memory, causing the OOMs.",
+      "supporting_ids": [
+        "dependency:inc04:0003"
+      ],
+      "contradicting_ids": [],
+      "proposed_confidence": 0.05,
+      "final_confidence": null
+    }
+  ],
+  "gaps": [
+    {
+      "id": "gap:1",
+      "tool": "logs",
+      "reason": "timeout after 3 attempts",
+      "service": "image-resizer",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    },
+    {
+      "id": "gap:2",
+      "tool": "logs",
+      "reason": "timeout after 3 attempts",
+      "service": "image-resizer",
+      "affects_hypotheses": [],
+      "task_id": "baseline"
+    }
+  ],
+  "closed_gaps": [
+    "gap:1",
+    "gap:2"
+  ],
+  "failures": [],
+  "counters": {
+    "tool_calls": 14,
+    "llm_calls": 16,
+    "tokens_in": 46002,
+    "tokens_out": 5707,
+    "cache_tokens": 0,
+    "llm_latency_s": 72.165
+  },
+  "trace": [
+    {
+      "task_id": "baseline",
+      "agent": "baseline",
+      "wave": 0,
+      "started_at": "2026-11-13T06:52:51.993463Z",
+      "ended_at": "2026-11-13T06:53:50.663742Z",
+      "status": "done",
+      "tool_calls": 14,
+      "llm_calls": 15
+    }
+  ],
+  "critic_loops": 0,
+  "critic_reviews": [],
+  "terminated_by": "done",
+  "report": {
+    "incident_id": "inc04",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "image-resizer",
+        "category": "capacity",
+        "summary": "A slow memory leak or memory exhaustion in image-resizer: pods reach the 4096Mi limit after about 117h of uptime and get OOMKilled one by one. In-flight requests are reset, and upload-api returns 502s in bursts.",
+        "supporting_ids": [
+          "log:inc04:0005",
+          "log:inc04:0007",
+          "metric:inc04:mem:0004",
+          "metric:inc04:mem:0005",
+          "metric:inc04:oom:0001",
+          "log:inc04:0006",
+          "log:inc04:0010",
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ],
+        "contradicting_ids": [
+          "deploy:inc04:0001"
+        ],
+        "proposed_confidence": 0.65,
+        "final_confidence": 0.65
+      },
+      {
+        "id": "H2",
+        "service": "thumbnail-cache",
+        "category": "bad_deploy",
+        "summary": "The thumbnail-cache v2.0.0 deploy (LRU to LFU) cold-started the cache with a 12% hit ratio. Cache misses pushed more resize work and memory onto image-resizer, tipping already-high pods into OOM about 30 minutes later.",
+        "supporting_ids": [
+          "deploy:inc04:0001",
+          "log:inc04:0001",
+          "dependency:inc04:0002",
+          "metric:inc04:mem:0005"
+        ],
+        "contradicting_ids": [
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002",
+          "log:inc04:0005",
+          "log:inc04:0007"
+        ],
+        "proposed_confidence": 0.3,
+        "final_confidence": 0.3
+      },
+      {
+        "id": "H3",
+        "service": "blob-store",
+        "category": "dependency_failure",
+        "summary": "blob-store slowness makes image-resizer buffer images in memory, causing the OOMs.",
+        "supporting_ids": [
+          "dependency:inc04:0003"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.05,
+        "final_confidence": 0.05
+      }
+    ],
+    "facts": [
+      {
+        "statement": "image-resizer containers were OOMKilled at 03:19:51 (pod image-resizer-7c9-2) and 03:24:37 (pod image-resizer-7c9-4). Each was at the 4096Mi limit after 117h of uptime.",
+        "evidence_ids": [
+          "log:inc04:0005",
+          "log:inc04:0007"
+        ]
+      },
+      {
+        "statement": "Max RSS memory in image-resizer was 3890 MiB at 03:00 and 4060 MiB at 03:15, close to the 4096Mi limit.",
+        "evidence_ids": [
+          "metric:inc04:mem:0004",
+          "metric:inc04:mem:0005",
+          "log:inc04:0005"
+        ]
+      },
+      {
+        "statement": "oom_kills_total for image-resizer was 3 at 03:35.",
+        "evidence_ids": [
+          "metric:inc04:oom:0001"
+        ]
+      },
+      {
+        "statement": "image-resizer request rate barely changed: 212 rps at 02:45 and 219 rps at 03:15.",
+        "evidence_ids": [
+          "metric:inc04:rps:0001",
+          "metric:inc04:rps:0002"
+        ]
+      },
+      {
+        "statement": "upload-api returned 502 with 'image-resizer connection reset by peer' at 03:20:05 and 03:31:20. The first came about 14s after the first OOMKill.",
+        "evidence_ids": [
+          "log:inc04:0006",
+          "log:inc04:0010",
+          "log:inc04:0005"
+        ]
+      },
+      {
+        "statement": "thumbnail-cache v2.0.0 was deployed at 02:50, switching eviction from LRU to LFU. At 02:52:30 it logged a cold start with a 12% hit ratio (normal 85%).",
+        "evidence_ids": [
+          "deploy:inc04:0001",
+          "log:inc04:0001"
+        ]
+      },
+      {
+        "statement": "upload-api calls image-resizer, and image-resizer calls thumbnail-cache and blob-store.",
+        "evidence_ids": [
+          "dependency:inc04:0001",
+          "dependency:inc04:0002",
+          "dependency:inc04:0003"
+        ]
+      },
+      {
+        "statement": "No image-resizer deploy was recorded between 2026-11-12 00:00 and 04:00 on the incident day. The only deploy in the window was thumbnail-cache.",
+        "evidence_ids": [
+          "deploy:inc04:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The bursts of 502s match individual pod OOMKill/restart events.",
+        "basis": "Error timestamps closely follow the OOMKill times, and failures are periodic.",
+        "how_to_verify": "Pull the full image-resizer logs for 03:25-04:00 and the pod restart events, then line them up with upload-api 502 timestamps."
+      },
+      {
+        "statement": "image-resizer memory grows slowly over time (a leak), so pods hit the limit at about 117h of uptime.",
+        "basis": "Both killed pods had the same 117h uptime and there was no recent deploy. However, the memory query for before 02:45 returned nothing, so the long-term trend is unconfirmed.",
+        "how_to_verify": "Get the memory_rss trend per pod over the last 5 days. Check whether recently restarted pods stay stable."
+      },
+      {
+        "statement": "Missing data: metrics for thumbnail-cache and blob-store, blob-store logs, and pre-incident image-resizer memory all came back empty. Early image-resizer log queries timed out (gaps 1 and 2 were later closed by a narrower query).",
+        "basis": "Tool results.",
+        "how_to_verify": "Re-query those sources, or use an alternative monitoring source."
+      },
+      {
+        "statement": "Already-uploaded images still display, which points to a failure in the write/resize path rather than in serving.",
+        "basis": "Incident symptoms.",
+        "how_to_verify": "Check the read-path error rates."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Do a staggered rolling restart of image-resizer pods, oldest uptime first, one or a few at a time with readiness gating. This resets accumulated memory before pods reach the 4096Mi limit.",
+        "rationale": "Memory climbs steadily and pods get OOMKilled after about 117h of uptime (metric:inc04:mem:0004, metric:inc04:mem:0005, metric:inc04:oom:0001). A controlled restart should stop the uncontrolled OOMKills, and the in-flight resets that drive the bursty 502s, while the root cause is investigated.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "As a short-term mitigation, consider temporarily raising the image-resizer memory limit above 4096Mi and/or adding replicas so per-pod load and memory pressure drop. Keep a memory-utilization alert at about 85% of the limit.",
+        "rationale": "Extra headroom lengthens the time to OOM and reduces how often failure bursts happen. The alert gives early warning before pods are killed (log:inc04:0005, log:inc04:0007).",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Before restarting, capture a heap profile or memory dump from one high-uptime image-resizer pod. Compare it with a freshly started pod to find what is growing.",
+        "rationale": "Root-causing the leak requires evidence from a pod near its limit. A restart destroys that evidence, so capture first.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Review image-resizer deploy and config history around 117h before the first OOM (about 5 days earlier) for changes that could introduce a leak, and evaluate rolling back to the prior version if one is found.",
+        "rationale": "A leak that consistently hits the limit at about 117h of uptime suggests pods have run continuously since a specific rollout. A code change in that window is a likely origin and a rollback candidate.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Verify H2 by checking image-resizer request rate and resize volume before and after the thumbnail-cache v2.0.0 deploy, against the thumbnail-cache hit ratio, which dropped to 12% (log:inc04:0001).",
+        "rationale": "H2 needs higher resize load after the deploy, but the rps metrics (metric:inc04:rps:0001, metric:inc04:rps:0002) currently contradict that. Confirming or ruling out a load increase decides whether the deploy contributed.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "If the verification shows cache misses meaningfully increased image-resizer load, consider rolling thumbnail-cache back from v2.0.0 (LFU) to the previous LRU version, or pre-warming the cache.",
+        "rationale": "Removing the extra miss-driven resize work would lower memory pressure on image-resizer pods that were already high (deploy:inc04:0001, dependency:inc04:0002).",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Check blob-store latency during the incident window against image-resizer per-pod memory growth and OOM timestamps.",
+        "rationale": "This is a low-cost check to confirm or rule out blob-store slowness causing in-memory buffering (dependency:inc04:0003). It is low priority given its 0.05 confidence.",
+        "hypothesis_id": "H3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 14,
+      "llm_calls": 16,
+      "tokens_in": 46002,
+      "tokens_out": 5707,
+      "cache_tokens": 0,
+      "latency_s": 75.201
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  }
+}

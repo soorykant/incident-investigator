@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc08",
+  "system": "multi",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T07:07:18.831707Z",
+  "report": {
+    "incident_id": "inc08",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "h1",
+        "service": "recs-svc",
+        "category": "feature_flag",
+        "summary": "At 13:30Z the flag flags.ranker_v2.enabled_regions was set to eu-west-1, turning ranker_v2 on for European traffic. ranker_v2 needs the feature 'session_affinity', which the feature-store response does not include, so ranker_v2 returns HTTP 500. eu-west-1 errors rose to about 29.5% and the overall rate to about 6%, and web-frontend shows an empty 'Recommended for you' row. Next step: turn off ranker_v2 for eu-west-1 by resetting enabled_regions to empty, then confirm the eu-west-1 error rate falls back to about 0.3%.",
+        "supporting_ids": [
+          "config:inc08:0001",
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012",
+          "metric:inc08:eu:0001",
+          "metric:inc08:eu:0002",
+          "metric:inc08:ap:0001",
+          "metric:inc08:us:0001",
+          "metric:inc08:err:0001",
+          "metric:inc08:err:0002",
+          "dependency:inc08:0001",
+          "dependency:inc08:0004"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.75,
+        "final_confidence": 0.75
+      },
+      {
+        "id": "h2",
+        "service": "feature-store",
+        "category": "dependency_failure",
+        "summary": "The feature-store serving eu-west-1 stopped publishing 'session_affinity' or returns a degraded or partial response. That would be a fault in feature-store, not in the recs-svc flag. Next step: check feature-store's eu-west-1 response schema and its logs and metrics at all levels. Find out whether 'session_affinity' was ever published, and whether ranker_v2 is enabled in other regions for comparison.",
+        "supporting_ids": [
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012",
+          "dependency:inc08:0001",
+          "metric:inc08:eu:0002"
+        ],
+        "contradicting_ids": [
+          "config:inc08:0001",
+          "metric:inc08:ap:0001",
+          "metric:inc08:us:0001"
+        ],
+        "proposed_confidence": 0.15,
+        "final_confidence": 0.15
+      },
+      {
+        "id": "h3",
+        "service": "recs-svc",
+        "category": "dependency_failure",
+        "summary": "A regional network problem in eu-west-1, similar to the past uplink packet loss, truncates or fails feature-store calls and causes the EU-only errors. Next step: check eu-west-1 network, packet loss and infra change logs, and the recs-svc latency and timeout metrics from 13:25Z to 14:30Z.",
+        "supporting_ids": [
+          "past:inc08:0001",
+          "metric:inc08:eu:0002",
+          "log:inc08:0004"
+        ],
+        "contradicting_ids": [
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012",
+          "config:inc08:0001"
+        ],
+        "proposed_confidence": 0.06,
+        "final_confidence": 0.06
+      },
+      {
+        "id": "h4",
+        "service": "recs-svc",
+        "category": "config_change",
+        "summary": "The cache.size_mb change from 512 to 1024 at 13:10Z causes memory pressure or cache misbehaviour, producing errors. Next step: check recs-svc memory and cache hit and miss metrics from 13:00Z to 13:40Z, and whether errors appear between 13:10Z and 13:30Z.",
+        "supporting_ids": [
+          "config:inc08:0002"
+        ],
+        "contradicting_ids": [
+          "metric:inc08:err:0001",
+          "metric:inc08:ap:0001",
+          "metric:inc08:us:0001",
+          "log:inc08:0004",
+          "log:inc08:0007"
+        ],
+        "proposed_confidence": 0.03,
+        "final_confidence": 0.03
+      }
+    ],
+    "facts": [
+      {
+        "statement": "Overall recs-svc error_rate_pct was 0.2% at 13:25Z and rose to 6.1% at 13:40Z.",
+        "evidence_ids": [
+          "metric:inc08:err:0001",
+          "metric:inc08:err:0002"
+        ]
+      },
+      {
+        "statement": "The eu_west_1 error rate was 0.3% at 13:25Z and 29.5% at 13:40Z.",
+        "evidence_ids": [
+          "metric:inc08:eu:0001",
+          "metric:inc08:eu:0002"
+        ]
+      },
+      {
+        "statement": "At 13:40Z, ap_south_1 error rate was 0.1% and us_east_1 was 0.2%, both near baseline.",
+        "evidence_ids": [
+          "metric:inc08:ap:0001",
+          "metric:inc08:us:0001"
+        ]
+      },
+      {
+        "statement": "The earliest ERROR log in the window is at 13:32:11Z, from eu-west-1, and the error onset matches the reported 13:32 UTC start.",
+        "evidence_ids": [
+          "log:inc08:0004"
+        ]
+      },
+      {
+        "statement": "All four returned ERROR log lines are HTTP 500 responses from eu-west-1 with the message \"ranker_v2: feature 'session_affinity' not found in feature-store response\". They occur at 13:32:11Z, 13:34:15Z, 13:48:50Z and 14:02:33Z.",
+        "evidence_ids": [
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012"
+        ]
+      },
+      {
+        "statement": "At 13:30:00Z a config change set flags.ranker_v2.enabled_regions from empty to \"eu-west-1\", about 2 minutes before the first eu-west-1 error.",
+        "evidence_ids": [
+          "config:inc08:0001"
+        ]
+      },
+      {
+        "statement": "At 13:10:00Z a config change set cache.size_mb from 512 to 1024. No log or metric in the returned data links this change to the errors.",
+        "evidence_ids": [
+          "config:inc08:0002"
+        ]
+      },
+      {
+        "statement": "Between 12:45 and 13:32 UTC, the deploys query (all services) returned two config changes for recs-svc and no deployment records.",
+        "evidence_ids": [
+          "config:inc08:0002",
+          "config:inc08:0001"
+        ]
+      },
+      {
+        "statement": "At 13:10:00Z, recs-svc config key cache.size_mb changed from 512 to 1024. The payload has no region field.",
+        "evidence_ids": [
+          "config:inc08:0002"
+        ]
+      },
+      {
+        "statement": "At 13:30:00Z, recs-svc config key flags.ranker_v2.enabled_regions changed from empty to eu-west-1. This is a feature flag flip limited to the eu-west-1 region.",
+        "evidence_ids": [
+          "config:inc08:0001"
+        ]
+      },
+      {
+        "statement": "The eu-west-1 ranker_v2 flag flip (13:30:00Z) happened about 2 minutes before the reported 13:32 UTC error onset. The cache size change (13:10:00Z) happened about 22 minutes before it.",
+        "evidence_ids": [
+          "config:inc08:0001",
+          "config:inc08:0002"
+        ]
+      },
+      {
+        "statement": "The dependency graph lists recs-svc calling feature-store and catalog-svc, and web-frontend calling recs-svc.",
+        "evidence_ids": [
+          "dependency:inc08:0001",
+          "dependency:inc08:0002",
+          "dependency:inc08:0004"
+        ]
+      },
+      {
+        "statement": "At 13:30:00Z, the config flags.ranker_v2.enabled_regions for recs-svc changed from empty to eu-west-1.",
+        "evidence_ids": [
+          "config:inc08:0001"
+        ]
+      },
+      {
+        "statement": "At 13:10:00Z, recs-svc config cache.size_mb changed from 512 to 1024.",
+        "evidence_ids": [
+          "config:inc08:0002"
+        ]
+      },
+      {
+        "statement": "Starting at 13:32:11Z, recs-svc ERROR logs in eu-west-1 show HTTP 500s from ranker_v2 with the message \"feature 'session_affinity' not found in feature-store response\".",
+        "evidence_ids": [
+          "log:inc08:0004",
+          "log:inc08:0007",
+          "log:inc08:0010",
+          "log:inc08:0012"
+        ]
+      },
+      {
+        "statement": "A past incident shows empty recommendations after a ranker release shipped a broken model file, resolved by rolling back recs-svc.",
+        "evidence_ids": [
+          "past:inc08:0002"
+        ]
+      },
+      {
+        "statement": "A past incident shows EU-only errors caused by packet loss on an eu-west-1 uplink, resolved by the provider fixing the uplink and adding cross-AZ retries.",
+        "evidence_ids": [
+          "past:inc08:0001"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The ranker_v2 flag enablement for eu-west-1 at 13:30Z is the trigger for the 'session_affinity' feature-not-found errors.",
+        "basis": "The config change precedes the first EU error by about 2 minutes, the region matches exactly, and the error names a feature that ranker_v2 depends on.",
+        "how_to_verify": "Check the ranker_v2 feature list against the feature-store schema and confirm whether 'session_affinity' is published in the feature store for eu-west-1. Then test by disabling flags.ranker_v2.enabled_regions for eu-west-1 in a controlled way and watching the EU error rate."
+      },
+      {
+        "statement": "The four ERROR log lines are a sample, not the full error population.",
+        "basis": "The logs call returned only four entries across 1h45m, while the metrics show a 29.5% EU error rate. The tool reported omitted=0, but the volume does not match the rate.",
+        "how_to_verify": "Re-query logs for eu-west-1 with level=ERROR and aggregate counts by message and status code over 13:30Z to 14:30Z."
+      },
+      {
+        "statement": "The error onset is between 13:25Z and 13:40Z, placed at 13:32Z by the first log line.",
+        "basis": "Metric samples exist only at 13:25Z and 13:40Z, so they cannot pin the onset. The 13:32:11Z log line is the earliest error.",
+        "how_to_verify": "Pull per-minute error_rate_pct_eu_west_1 samples for 13:25Z to 13:45Z."
+      },
+      {
+        "statement": "The 6.1% overall error rate reflects the eu_west_1 share of traffic at roughly 20%.",
+        "basis": "A 29.5% EU rate combined with near-baseline rates elsewhere would give about 6% overall only if EU carries about one-fifth of requests. No traffic volumes were returned.",
+        "how_to_verify": "Get request counts per region from the metrics store for the same window and recompute the weighted average."
+      },
+      {
+        "statement": "Latency, per-instance or per-zone breakdowns, and WARN/INFO logs were not retrieved, so the instance-level and latency picture is unknown.",
+        "basis": "The metrics call used name=null and returned only the error-rate series. The logs call filtered to ERROR. Only two tool calls remained after the first metrics failure.",
+        "how_to_verify": "Query recs-svc latency metrics and per-instance or per-zone error rates for eu-west-1, and check whether any instance differs from the others."
+      },
+      {
+        "statement": "The cache.size_mb change at 13:10Z is not related to the incident.",
+        "basis": "It occurred before the errors began, and no returned evidence shows an effect from it.",
+        "how_to_verify": "Check cache hit rate and memory metrics for recs-svc from 13:10Z onward."
+      },
+      {
+        "statement": "The first metrics call returned a tool backend error and no data. A retry succeeded.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The 13:32 UTC error onset is taken from the incident report and has not been checked against recs-svc metrics.",
+        "basis": "Only the incident report states the onset; the metrics tool has not been called in this task.",
+        "how_to_verify": "Query metrics for recs-svc error rate from 13:00 to 14:00 UTC, broken down by region if available, and confirm the step change time."
+      },
+      {
+        "statement": "The ranker_v2 flag change is the most likely trigger, and the cache.size_mb change is less likely to be the cause.",
+        "basis": "The flag flip is limited to eu-west-1, is 2 minutes before onset, and matches the report that most complaints come from Europe. The cache change has no region scope and came earlier.",
+        "how_to_verify": "Check logs for recs-svc ERROR entries in eu-west-1 after 13:30 UTC for ranker_v2 errors, and compare error rates in eu-west-1 with other regions. Check whether recs-svc had errors between 13:10 and 13:30 UTC after the cache change."
+      },
+      {
+        "statement": "The 'eu-west-1' region name refers to a European region, and the flag limits ranker_v2 to European traffic.",
+        "basis": "Region naming convention; the payload does not state the geography.",
+        "how_to_verify": "Confirm the eu-west-1 region mapping and check the flag's targeting rules."
+      },
+      {
+        "statement": "No direct upstream dependencies of recs-svc were identified, so upstream deploy coverage relies on the all-service deploys query.",
+        "basis": "The dependencies tool timed out after 3 attempts (gap:2), and the deploys query was run with service=null.",
+        "how_to_verify": "Retry the dependencies query for recs-svc with direction=both, or check the service graph directly. Then filter deploys for each direct upstream over 12:45 to 13:32 UTC."
+      },
+      {
+        "statement": "The deploys query may be incomplete: it returned no deploy records, and the result set has no omitted rows, but it is unclear whether infrastructure changes are recorded by this tool.",
+        "basis": "The deploys tool covers deployments and config changes, and infra changes are not listed as a returned kind.",
+        "how_to_verify": "Check the infrastructure change log for eu-west-1 and recs-svc hosts between 12:45 and 13:32 UTC."
+      },
+      {
+        "statement": "The 500 errors are caused by the ranker_v2 enablement in eu-west-1 at 13:30Z, which requests a feature (session_affinity) that the feature-store response does not include.",
+        "basis": "The error timing starts at 13:32Z, about two minutes after the flag change, and every sampled error is in eu-west-1 with the same ranker_v2 message.",
+        "how_to_verify": "Check feature-store's schema and response for session_affinity, confirm which ranker_v2 version requires it, and compare error rates for eu-west-1 requests with ranker_v2 on versus off."
+      },
+      {
+        "statement": "The cache.size_mb change at 13:10Z is not the cause of the incident.",
+        "basis": "It is not regional, precedes the first error by over 20 minutes, and no log or metric links it to the errors.",
+        "how_to_verify": "Pull recs-svc cache hit/miss and memory metrics for 13:00Z to 13:40Z and check whether errors appear outside eu-west-1."
+      },
+      {
+        "statement": "feature-store is not failing. It returns a valid response that lacks session_affinity.",
+        "basis": "No feature-store WARN or ERROR logs were returned, and no feature-store deploys appeared in the deploy window.",
+        "how_to_verify": "Query feature-store logs at all levels, including INFO and DEBUG, and check its metrics and response schema for eu-west-1."
+      },
+      {
+        "statement": "The 6% overall error rate is consistent with eu-west-1 traffic being a share of total requests, but this is unverified.",
+        "basis": "The log query returned only four sampled ERROR rows, with no counts or region breakdown; the sample is not a complete count.",
+        "how_to_verify": "Pull recs-svc error-rate metrics split by region, plus the eu-west-1 share of total traffic, for 13:30Z to 14:30Z."
+      },
+      {
+        "statement": "No regional topology is known for recs-svc, feature-store, or catalog-svc, including whether feature-store runs in eu-west-1.",
+        "basis": "The dependency results contain no region or deployment fields, and the dependency query returned no region data.",
+        "how_to_verify": "Query the dependency graph or deployment inventory for feature-store and catalog-svc by region, and check whether eu-west-1 has its own feature-store endpoint."
+      },
+      {
+        "statement": "The dependency result may be incomplete, since evidence ID dependency:inc08:0003 is absent from the response.",
+        "basis": "The returned IDs go 0001, 0002, 0004, with 0003 missing, and the result reports omitted: 0.",
+        "how_to_verify": "Re-run the dependencies query for recs-svc (upstream and downstream) and check for an edge to a user profile service, model store, or regional cache."
+      },
+      {
+        "statement": "The 'Recommended for you' empty row on the home page is caused by recs-svc 500s, and the complaint cases are European users served by eu-west-1.",
+        "basis": "web-frontend depends on recs-svc, and the errors are in eu-west-1, consistent with European complaints.",
+        "how_to_verify": "Confirm the regional routing of European users to eu-west-1 and check web-frontend logs for recs-svc call failures."
+      },
+      {
+        "statement": "The feature-store WARN-level log query for 12:45Z to 14:30Z returned no rows.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "The four ERROR log lines represent the main error population in eu-west-1.",
+        "basis": "Only four rows were returned against a 29.5% EU error rate, but all four carry the same message.",
+        "how_to_verify": "Aggregate eu-west-1 ERROR logs by message and status from 13:30Z to 14:30Z."
+      },
+      {
+        "statement": "eu-west-1 carries about 20% of recs-svc traffic, which explains a 6.1% overall rate from a 29.5% EU rate.",
+        "basis": "This follows from the weighted-average arithmetic. No traffic volumes were returned.",
+        "how_to_verify": "Pull request counts per region and recompute the overall rate."
+      },
+      {
+        "statement": "ranker_v2 is not enabled in any other region, so the missing-feature behaviour has not been tested elsewhere.",
+        "basis": "The flag changed from empty to eu-west-1 only.",
+        "how_to_verify": "Check the flag history and ranker_v2's feature requirements against the feature-store schema."
+      },
+      {
+        "statement": "European users are routed to eu-west-1, and the empty row is caused by recs-svc 500s.",
+        "basis": "web-frontend depends on recs-svc, and the region name matches the European complaints.",
+        "how_to_verify": "Check the routing configuration and the web-frontend logs for recs-svc call failures."
+      },
+      {
+        "statement": "The dependency list may be incomplete because dependency:inc08:0003 is missing.",
+        "basis": "There is a gap in the evidence ID sequence.",
+        "how_to_verify": "Re-run the dependencies query for recs-svc in both directions."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Reset flags.ranker_v2.enabled_regions to empty so ranker_v2 is turned off for eu-west-1, then confirm the eu-west-1 recs-svc error rate returns to baseline (about 0.3%).",
+        "rationale": "h1 is the highest-confidence hypothesis (0.75). ranker_v2 needs 'session_affinity', which the feature-store response lacks, and the errors began when the flag was set at 13:30Z. Reverting the flag is the fastest way to restore recommendations for European users.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "After the rollback, check that the overall recs-svc error rate (about 6%) and the empty 'Recommended for you' row on the home page recover, using web-frontend metrics.",
+        "rationale": "This verifies that the flag change accounts for the user-facing symptom, not just the eu-west-1 error metric.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Inspect the feature-store eu-west-1 response schema, logs, and metrics to determine whether 'session_affinity' was ever published or was dropped or degraded. Also compare ranker_v2 behaviour in ap and us regions.",
+        "rationale": "h2 (0.15) is the main alternative. Checking whether the feature-store is the root cause would show whether the flag change alone explains the failure, and would reveal a second fault that could recur once the flag is re-enabled.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Review eu-west-1 network packet loss, infra change logs, and recs-svc latency and timeout metrics from 13:25Z to 14:30Z.",
+        "rationale": "h3 (0.06) is a lower-confidence network explanation. Ruling it out is a low-cost check, and it matters because the earlier uplink packet loss incident shows this failure mode has occurred before.",
+        "hypothesis_id": "h3"
+      },
+      {
+        "action": "Check recs-svc memory and cache hit/miss metrics from 13:00Z to 13:40Z, and whether errors started between 13:10Z and 13:30Z, before the flag change.",
+        "rationale": "h4 (0.03) is the least likely hypothesis, and its contradicting evidence is strong. A quick look at the metrics would confirm that the cache.size_mb change is not contributing.",
+        "hypothesis_id": "h4"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 11,
+      "llm_calls": 18,
+      "tokens_in": 43282,
+      "tokens_out": 15111,
+      "cache_tokens": 0,
+      "latency_s": 84.885
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in t1: tool backend error"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "dependencies gap in t2: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "recs-svc",
+    "expected_category": "feature_flag",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 65,
+    "grounded": 65,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 4,
+        "rationale": "The core claims match their cited rows: the flag flip in config:inc08:0001, the four eu-west-1 'session_affinity not found' 500s in log:inc08:0004/0007/0010/0012, and the regional split in metric:inc08:eu:0002, us:0001 and ap:0001. Two claims are weaker. The statement that the deploys query returned 'no deployment records' cites only config rows and cannot be checked, even though a recs-svc deploy (deploy:inc08:0001) exists in the scenario. The empty-row symptom in h1 rests only on dependency:inc08:0004."
+      },
+      "fact_assumption_separation": {
+        "score": 4,
+        "rationale": "Observations are mostly stated as facts with citations, and the inferences (flag as trigger, 20% EU traffic share, feature-store health) are listed as assumptions with a basis and a verification step. Two things cost a point. Several assumptions are duplicated or contradict each other: one says the metrics tool was never called despite metrics being cited, and the four log lines are described both as a mere sample and as the main error population. A few facts also repeat each other."
+      },
+      "recommended_actions": {
+        "score": 5,
+        "rationale": "The first action resets flags.ranker_v2.enabled_regions, which is the correct, specific and reversible mitigation for the feature_flag root cause. It comes with explicit checks that the eu-west-1 error rate and the user-facing home-page symptom recover. The follow-ups (feature-store schema check, cheap checks to rule out network and cache causes) are sensible and proportionate to their confidence."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The top hypothesis is the eu-west-1 flag flip, not any of the traps. The network-partition story (past:inc08:0001) and the cache.size_mb change (config:inc08:0002) are ranked low at 0.06 and 0.03 with contradicting evidence cited. The ranker release story (past:inc08:0002) is only noted as a fact and is not relied on."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 10454,
+      "tokens_out": 1284,
+      "cache_tokens": 0
+    },
+    "latency_s": 13.261,
+    "judged_at": "2026-11-13T07:28:58.000195Z"
+  }
+}

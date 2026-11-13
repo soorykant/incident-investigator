@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+.claude/worktrees/
+
+# Evaluation runs: commit only the live run (a deliverable). Mock and scratch runs stay local.
+eval/results/*
+!eval/results/live/
+
+# Diagram working files and receipts (contain local paths)
+.archify/

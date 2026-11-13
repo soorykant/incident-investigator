@@ -1,0 +1,63 @@
+{
+  "id": "inc06",
+  "report": {
+    "title": "Stock lookups slow on product and cart pages",
+    "symptoms": [
+      "inventory-svc p99 latency above 5 s since about 10:18 UTC",
+      "Cart page sometimes shows 'stock unavailable'",
+      "A flash sale is running this morning"
+    ],
+    "affected_service": "inventory-svc",
+    "window_start": "2026-11-15T09:50:00Z",
+    "window_end": "2026-11-15T11:15:00Z",
+    "severity": "SEV2"
+  },
+  "logs": [
+    {"id": "log:inc06:0001", "timestamp": "2026-11-15T10:00:00Z", "service": "promo-svc", "level": "INFO", "message": "Flash sale FS-118 started (expected traffic +30%)"},
+    {"id": "log:inc06:0002", "timestamp": "2026-11-15T10:14:20Z", "service": "inventory-db", "level": "INFO", "message": "migration 0142 started: rebuild stock_levels, drop idx_stock_sku_warehouse"},
+    {"id": "log:inc06:0003", "timestamp": "2026-11-15T10:16:55Z", "service": "inventory-db", "level": "INFO", "message": "migration 0142 finished in 2m35s; migration 0143 (create idx_stock_sku_wh_v2) pending"},
+    {"id": "log:inc06:0004", "timestamp": "2026-11-15T10:18:02Z", "service": "inventory-db", "level": "WARN", "message": "slow query 4812ms: SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2 (Seq Scan on stock_levels, rows=8.2M)"},
+    {"id": "log:inc06:0005", "timestamp": "2026-11-15T10:18:40Z", "service": "inventory-svc", "level": "ERROR", "message": "GET /stock/sku-55120 504: inventory-db query timeout after 5000ms"},
+    {"id": "log:inc06:0006", "timestamp": "2026-11-15T10:21:13Z", "service": "inventory-db", "level": "WARN", "message": "slow query 5230ms: SELECT qty FROM stock_levels WHERE sku=$1 AND warehouse_id=$2 (Seq Scan on stock_levels, rows=8.2M)"},
+    {"id": "log:inc06:0007", "timestamp": "2026-11-15T10:24:50Z", "service": "inventory-db", "level": "WARN", "message": "CPU 96%: 212 active queries, top statement SELECT qty FROM stock_levels"},
+    {"id": "log:inc06:0008", "timestamp": "2026-11-15T10:31:30Z", "service": "inventory-svc", "level": "INFO", "message": "Starting inventory-svc v2.9.0 (reservation cache enabled)"},
+    {"id": "log:inc06:0009", "timestamp": "2026-11-15T10:33:05Z", "service": "inventory-svc", "level": "WARN", "message": "Reservation cache miss ratio 100% (warming)"},
+    {"id": "log:inc06:0010", "timestamp": "2026-11-15T10:36:41Z", "service": "inventory-svc", "level": "ERROR", "message": "GET /stock/sku-10233 504: inventory-db query timeout after 5000ms"},
+    {"id": "log:inc06:0011", "timestamp": "2026-11-15T10:45:00Z", "service": "inventory-svc", "level": "WARN", "message": "Autoscaler added 4 replicas (CPU 22%, waiting on DB)"},
+    {"id": "log:inc06:0012", "timestamp": "2026-11-15T10:52:12Z", "service": "inventory-svc", "level": "ERROR", "message": "GET /stock/sku-88001 504: inventory-db query timeout after 5000ms"}
+  ],
+  "metrics": [
+    {"id": "metric:inc06:p99:0001", "timestamp": "2026-11-15T10:00:00Z", "service": "inventory-svc", "name": "p99_latency_ms", "value": 85.0},
+    {"id": "metric:inc06:p99:0002", "timestamp": "2026-11-15T10:10:00Z", "service": "inventory-svc", "name": "p99_latency_ms", "value": 92.0},
+    {"id": "metric:inc06:rps:0001", "timestamp": "2026-11-15T10:10:00Z", "service": "inventory-svc", "name": "requests_per_s", "value": 1310.0},
+    {"id": "metric:inc06:p99:0003", "timestamp": "2026-11-15T10:20:00Z", "service": "inventory-svc", "name": "p99_latency_ms", "value": 5100.0},
+    {"id": "metric:inc06:rps:0002", "timestamp": "2026-11-15T10:20:00Z", "service": "inventory-svc", "name": "requests_per_s", "value": 1340.0},
+    {"id": "metric:inc06:p99:0004", "timestamp": "2026-11-15T10:40:00Z", "service": "inventory-svc", "name": "p99_latency_ms", "value": 5020.0},
+    {"id": "metric:inc06:dbcpu:0001", "timestamp": "2026-11-15T10:10:00Z", "service": "inventory-db", "name": "cpu_pct", "value": 31.0},
+    {"id": "metric:inc06:dbcpu:0002", "timestamp": "2026-11-15T10:20:00Z", "service": "inventory-db", "name": "cpu_pct", "value": 96.0},
+    {"id": "metric:inc06:seq:0001", "timestamp": "2026-11-15T10:10:00Z", "service": "inventory-db", "name": "seq_scans_per_s", "value": 0.2},
+    {"id": "metric:inc06:seq:0002", "timestamp": "2026-11-15T10:20:00Z", "service": "inventory-db", "name": "seq_scans_per_s", "value": 1290.0}
+  ],
+  "deploys": [
+    {"id": "deploy:inc06:0001", "timestamp": "2026-11-15T10:14:00Z", "service": "inventory-db", "version": "migration-0142", "description": "Rebuild stock_levels table; drop idx_stock_sku_warehouse (superseded by 0143)"},
+    {"id": "deploy:inc06:0002", "timestamp": "2026-11-15T10:30:00Z", "service": "inventory-svc", "version": "v2.9.0", "description": "Add reservation cache"},
+    {"id": "deploy:inc06:0003", "timestamp": "2026-11-15T08:00:00Z", "service": "promo-svc", "version": "v1.22.0", "description": "Flash sale FS-118 banners"}
+  ],
+  "config_changes": [
+    {"id": "config:inc06:0001", "timestamp": "2026-11-15T09:55:00Z", "service": "inventory-svc", "key": "autoscaler.max_replicas", "old_value": "12", "new_value": "20"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc06:0001", "service": "inventory-svc", "depends_on": "inventory-db"},
+    {"id": "dependency:inc06:0002", "service": "cart-api", "depends_on": "inventory-svc"},
+    {"id": "dependency:inc06:0003", "service": "product-page", "depends_on": "inventory-svc"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc06:0001", "title": "Inventory slowness during Black Friday traffic peak", "tags": ["inventory", "traffic", "scaling"], "root_cause": "Traffic exceeded the replica count of inventory-svc", "resolution": "Raised the autoscaler limit"},
+    {"id": "past:inc06:0002", "title": "Cart errors after a cache release", "tags": ["inventory", "cache", "deploy"], "root_cause": "A cache release stampeded the database on cold start", "resolution": "Rolled back and added cache warming"}
+  ],
+  "failure_schedule": [
+    {"tool": "metrics", "call_index": 1, "mode": "partial", "partial_fraction": 0.4},
+    {"tool": "metrics", "call_index": 3, "mode": "partial", "partial_fraction": 0.5},
+    {"tool": "past_incidents", "call_index": 1, "mode": "timeout"}
+  ]
+}

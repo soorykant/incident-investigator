@@ -1,0 +1,21 @@
+{
+  "incident_id": "inc06",
+  "expected_outcome": "root_cause",
+  "service": "inventory-db",
+  "category": "db_migration",
+  "key_evidence_ids": ["deploy:inc06:0001", "log:inc06:0003", "log:inc06:0004", "metric:inc06:seq:0002", "metric:inc06:p99:0003"],
+  "traps": [
+    {
+      "description": "A flash sale started at 10:00, the autoscaler added replicas and a past incident blames traffic peaks, suggesting capacity; but request rate rose only ~2% while latency jumped 50x, and the slowdown starts right after the migration, not the sale",
+      "misleading_evidence_ids": ["log:inc06:0001", "metric:inc06:rps:0002", "log:inc06:0011", "past:inc06:0001"]
+    },
+    {
+      "description": "inventory-svc v2.9.0 shipped a reservation cache that is cold on start, and a past incident blames a cache release; but the timeouts begin 13 minutes before that deploy",
+      "misleading_evidence_ids": ["deploy:inc06:0002", "log:inc06:0009", "past:inc06:0002"]
+    },
+    {
+      "description": "The first metrics call returns only the early, healthy samples (partial result), which can make inventory-svc look fine",
+      "misleading_evidence_ids": ["metric:inc06:p99:0001", "metric:inc06:p99:0002"]
+    }
+  ]
+}

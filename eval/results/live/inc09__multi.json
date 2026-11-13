@@ -1,0 +1,651 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc09",
+  "system": "multi",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T07:12:49.301872Z",
+  "report": {
+    "incident_id": "inc09",
+    "outcome": "INCONCLUSIVE",
+    "ranked_hypotheses": [
+      {
+        "id": "h2",
+        "service": "notification-svc",
+        "category": "bad_deploy",
+        "summary": "The v3.3.0 deploy bumped the queue client library. The new process started at 02:11:30Z, and a consumer lag WARN of 38s followed at 02:13:05Z. That 38s of lag puts the start of accumulation near 02:12:27Z, after the new client came up. The new client then appears to have left consumers stalled or holding partitions without making progress. Sends fell to about 14/s at 02:30Z while CPU sat at 11%, which fits blocked consumers rather than busy ones. Lag reached 1,940s by 02:59Z and queue depth reached 151000 by 02:55Z. At 02:59:10Z the consumer group rebalanced with 3 members. Throughput then recovered to about 165/s, matching 9,880 pushes per 60s at 03:06Z, and lag fell to 2s. This happened with no rollback and no max_inflight revert. The rebalance is the only logged event at the recovery point, and it explains self-recovery without needing an external change. At the fixed cap of 200, 165/s implies about 1.2s hold time per message, so the 14s hold during the stall points to the client. Weaknesses: no log names a stall, ack timeout or reconnect. The logs tool cannot filter by keyword, and logs between 02:13Z and 02:59Z are absent. The rebalance trigger is unknown.",
+        "supporting_ids": [
+          "deploy:inc09:0001",
+          "log:inc09:0002",
+          "log:inc09:0003",
+          "log:inc09:0007",
+          "log:inc09:0008",
+          "metric:inc09:depth:0001",
+          "metric:inc09:depth:0002",
+          "metric:inc09:depth:0003",
+          "metric:inc09:depth:0004",
+          "metric:inc09:sent:0001",
+          "metric:inc09:sent:0002",
+          "metric:inc09:cpu:0001"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.55,
+        "final_confidence": 0.55
+      },
+      {
+        "id": "h1",
+        "service": "queue-broker",
+        "category": "config_change",
+        "summary": "At 02:12Z queue-broker consumer.max_inflight was cut from 500 to 200 and never reverted. It fits the onset and a past broker-tuning backlog incident. However, throughput recovered to about 165/s at 03:05Z and lag fell to 2s by 03:06Z with the cap still at 200. Recovery coincided with a consumer group rebalance, not a config change. The cap therefore cannot be the sole cause. It can only have bound while per-message hold time was about 14s, which needs a client-side stall. At most it is an amplifying co-factor of h2.",
+        "supporting_ids": [
+          "config:inc09:0001",
+          "log:inc09:0003",
+          "metric:inc09:depth:0002",
+          "metric:inc09:depth:0003",
+          "metric:inc09:sent:0001",
+          "past:inc09:0001",
+          "dependency:inc09:0001"
+        ],
+        "contradicting_ids": [
+          "metric:inc09:sent:0002",
+          "metric:inc09:depth:0004",
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ],
+        "proposed_confidence": 0.18,
+        "final_confidence": 0.18
+      },
+      {
+        "id": "h4",
+        "service": "queue-broker",
+        "category": "dependency_failure",
+        "summary": "The queue-broker group coordinator may have held a stale or stuck partition assignment, for example to a member that left during the v3.3.0 rollout. That would leave some partitions unconsumed until the 02:59:10Z rebalance restored assignment across 3 members. This differs from h2 in placing the fault on the broker side rather than in the new client. It explains the same timeline, but no broker coordinator logs were retrieved to support or refute it.",
+        "supporting_ids": [
+          "log:inc09:0007",
+          "log:inc09:0008",
+          "metric:inc09:depth:0003",
+          "metric:inc09:depth:0004",
+          "metric:inc09:sent:0001",
+          "metric:inc09:sent:0002",
+          "dependency:inc09:0001"
+        ],
+        "contradicting_ids": [
+          "log:inc09:0002"
+        ],
+        "proposed_confidence": 0.12,
+        "final_confidence": 0.12
+      },
+      {
+        "id": "h3",
+        "service": "push-gateway",
+        "category": "third_party_limit",
+        "summary": "pushcloud throttling could have limited sends to 14/s until the throttling lifted. The only throttle signal is a single 429 at 02:15:41Z, and that batch was retried successfully. No throttling appears around the 02:55Z to 03:05Z recovery. Lag began before that 429. Recovery coincides with a consumer rebalance in notification-svc, which points upstream of push-gateway. The 14/s rate is equally consistent with push-gateway being starved by stalled consumers.",
+        "supporting_ids": [
+          "log:inc09:0005",
+          "metric:inc09:sent:0001",
+          "past:inc09:0002",
+          "dependency:inc09:0002"
+        ],
+        "contradicting_ids": [
+          "log:inc09:0003",
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ],
+        "proposed_confidence": 0.07,
+        "final_confidence": 0.07
+      }
+    ],
+    "facts": [
+      {
+        "statement": "notification-svc was deployed to v3.3.0 at 2026-11-18T02:10:00Z. The deploy description is 'Template rendering refactor; bump queue client library'.",
+        "evidence_ids": [
+          "deploy:inc09:0001"
+        ]
+      },
+      {
+        "statement": "This v3.3.0 deploy is the only deploy or config change recorded for notification-svc between 01:00Z and 03:30Z.",
+        "evidence_ids": [
+          "deploy:inc09:0001"
+        ]
+      },
+      {
+        "statement": "A cpu_pct sample of 11.0 was recorded for notification-svc at 2026-11-18T02:30:00Z, during the reported delay window. This is the only metric sample returned for the window across all metric queries.",
+        "evidence_ids": [
+          "metric:inc09:cpu:0001"
+        ]
+      },
+      {
+        "statement": "notification-svc was deployed to v3.3.0 at 2026-11-18T02:10:00Z, described as a template rendering refactor and a queue client library bump.",
+        "evidence_ids": [
+          "deploy:inc09:0001"
+        ]
+      },
+      {
+        "statement": "A config change at 2026-11-18T02:12:00Z lowered queue-broker consumer.max_inflight from 500 to 200.",
+        "evidence_ids": [
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "Both the notification-svc deploy (02:10Z) and the queue-broker config change (02:12Z) occur shortly before the reported onset of delays at about 02:15Z.",
+        "evidence_ids": [
+          "deploy:inc09:0001",
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "Within 01:00Z to 03:30Z, the unfiltered deploys query returned no other deploys or config changes, and no change is recorded near 03:00Z when delivery recovered.",
+        "evidence_ids": [
+          "deploy:inc09:0001",
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "The only metric sample returned for notification-svc in the window is cpu_pct = 11.0 at 2026-11-18T02:30:00Z.",
+        "evidence_ids": [
+          "metric:inc09:cpu:0001"
+        ]
+      },
+      {
+        "statement": "The dependency graph lists two downstream edges for notification-svc: queue-broker and push-gateway.",
+        "evidence_ids": [
+          "dependency:inc09:0001",
+          "dependency:inc09:0002"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'Notification backlog after broker tuning' had root cause 'Lowering consumer inflight limits throttled delivery' and was resolved by restoring the broker setting.",
+        "evidence_ids": [
+          "past:inc09:0001"
+        ]
+      },
+      {
+        "statement": "A past incident titled 'Push delays from provider throttling' had root cause 'The push provider throttled sends during a campaign' and was resolved by spreading the campaign over an hour.",
+        "evidence_ids": [
+          "past:inc09:0002"
+        ]
+      },
+      {
+        "statement": "notifications_queue_depth was 1200 at 02:10Z, 94000 at 02:30Z, 151000 at 02:55Z, and 4100 at 03:10Z.",
+        "evidence_ids": [
+          "metric:inc09:depth:0001",
+          "metric:inc09:depth:0002",
+          "metric:inc09:depth:0003",
+          "metric:inc09:depth:0004"
+        ]
+      },
+      {
+        "statement": "A config change at 02:12Z set queue-broker consumer.max_inflight from 500 to 200.",
+        "evidence_ids": [
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "The config audit for queue-broker from 02:00Z to 04:00Z contains only the max_inflight change at 02:12Z. No revert or second max_inflight change appears in that window.",
+        "evidence_ids": [
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "Queue depth rose from about 1200 to 151000 between 02:10Z and 02:55Z, and fell to about 4100 by 03:10Z.",
+        "evidence_ids": [
+          "metric:inc09:depth:0001",
+          "metric:inc09:depth:0003",
+          "metric:inc09:depth:0004"
+        ]
+      },
+      {
+        "statement": "notification-svc logged a WARN at 2026-11-18T02:13:05Z: 'Consumer lag rising: 38s'.",
+        "evidence_ids": [
+          "log:inc09:0003"
+        ]
+      },
+      {
+        "statement": "push-gateway logged a WARN at 2026-11-18T02:15:41Z that pushcloud responded 429 once for batch b-77120, and the batch was retried successfully.",
+        "evidence_ids": [
+          "log:inc09:0005"
+        ]
+      },
+      {
+        "statement": "notification-svc deployed v3.3.0 at 2026-11-18T02:10:00Z (template rendering refactor; bumped queue client library).",
+        "evidence_ids": [
+          "deploy:inc09:0001"
+        ]
+      },
+      {
+        "statement": "queue-broker config consumer.max_inflight was changed from 500 to 200 at 2026-11-18T02:12:00Z.",
+        "evidence_ids": [
+          "config:inc09:0001"
+        ]
+      },
+      {
+        "statement": "push-gateway pushes_sent_per_s was 14.0 at 2026-11-18T02:30:00Z and 165.0 at 2026-11-18T03:05:00Z.",
+        "evidence_ids": [
+          "metric:inc09:sent:0001",
+          "metric:inc09:sent:0002"
+        ]
+      },
+      {
+        "statement": "notification-svc v3.3.0 was deployed with a template rendering refactor and a queue client library bump, recorded at 02:10:00Z.",
+        "evidence_ids": [
+          "deploy:inc09:0001"
+        ]
+      },
+      {
+        "statement": "The notification-svc v3.3.0 process started at 02:11:30Z.",
+        "evidence_ids": [
+          "log:inc09:0002"
+        ]
+      },
+      {
+        "statement": "A WARN log reported consumer lag rising to 38s at 02:13:05Z, shortly after the v3.3.0 start.",
+        "evidence_ids": [
+          "log:inc09:0003"
+        ]
+      },
+      {
+        "statement": "At 02:59:10Z an INFO log reported that the consumer group rebalanced with 3 members, with lag at 1,940s and falling.",
+        "evidence_ids": [
+          "log:inc09:0007"
+        ]
+      },
+      {
+        "statement": "At 03:06:00Z an INFO log reported 9,880 pushes delivered in the last 60s and consumer lag at 2s.",
+        "evidence_ids": [
+          "log:inc09:0008"
+        ]
+      },
+      {
+        "statement": "Consumer lag went from 38s at 02:13Z to 1,940s at 02:59Z and back to 2s by 03:06Z, so the backlog built up and then cleared within the reported window.",
+        "evidence_ids": [
+          "log:inc09:0003",
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ]
+      },
+      {
+        "statement": "No log line in the queried window matched the requested keywords (restart, reconnect, ack timeout, prefetch, session expired, connection reset) or recorded a pod restart. The only logs returned were the four lines above, and the WARN-level query returned only the 02:13:05Z lag warning.",
+        "evidence_ids": [
+          "log:inc09:0002",
+          "log:inc09:0003",
+          "log:inc09:0007",
+          "log:inc09:0008"
+        ]
+      },
+      {
+        "statement": "The only metric sample returned in the window is cpu_pct = 11.0 at 02:30:00Z. No queue, lag or throughput metric samples were returned.",
+        "evidence_ids": [
+          "metric:inc09:cpu:0001"
+        ]
+      },
+      {
+        "statement": "The only push-gateway WARN log in 02:10Z to 03:10Z that mentions a pushcloud 429 is at 02:15:41Z: batch b-77120 got one 429 and was retried successfully.",
+        "evidence_ids": [
+          "log:inc09:0005"
+        ]
+      },
+      {
+        "statement": "The push-gateway metric pushes_sent_per_s was 14.0 at 02:30:00Z and 165.0 at 03:05:00Z.",
+        "evidence_ids": [
+          "metric:inc09:sent:0001",
+          "metric:inc09:sent:0002"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The v3.3.0 deploy at 02:10Z is the trigger for the delay. Its timing fits the reported onset of about 02:15Z, and it bumped the queue client library, which could change queue consumption behavior.",
+        "basis": "Only deploy in the window; it precedes reported symptom onset by about 5 minutes. No mechanism has been confirmed.",
+        "how_to_verify": "Compare queue client library version and consumer behavior before and after v3.3.0. Check whether the delay began at or shortly after the 02:10Z deploy, and whether a rollback or a revert of the library bump clears it."
+      },
+      {
+        "statement": "The delay is not explained by worker saturation or CPU exhaustion. CPU was low (11%) at 02:30Z.",
+        "basis": "The single cpu_pct sample of 11.0 at 02:30Z. This is one data point, and worker count and saturation were never retrieved.",
+        "how_to_verify": "Pull cpu_pct, worker count, and saturation for every minute from 02:00Z to 03:30Z to confirm no saturation occurred."
+      },
+      {
+        "statement": "Queue depth and consumer lag during the window are unknown. Both queries returned no data, so the backlog hypothesis can be neither confirmed nor ruled out.",
+        "basis": "The consumer_lag query returned status ok with zero evidence rows. The queue_depth query timed out after 3 attempts (gap:2). A retry bounded to 03:05Z also returned zero rows, which may mean the metric is not emitted or is named differently.",
+        "how_to_verify": "Verify metric names and emission for queue depth and consumer lag, then re-query 02:00Z–03:30Z in smaller windows. Check the queue broker's own depth and lag metrics directly."
+      },
+      {
+        "statement": "The 02:15Z–03:00Z delay start and clear times are not established by metric evidence. The reported timing comes only from the incident report and is unverified.",
+        "basis": "Metrics returned no per-minute latency, throughput, or delivery data. The reported clear around 03:00Z has no supporting deploy, config change, or metric in the evidence.",
+        "how_to_verify": "Obtain per-minute send latency, delivery-time, and throughput series for 02:00Z–03:30Z. Look for what changed around 03:00Z, such as autoscaling, a provider-side change, queue drain, or a config flip."
+      },
+      {
+        "statement": "Push-provider retries and throttling responses are unknown. The WARN log query returned partial results with 1 of 1 rows missing (gap:1), and no log rows were returned.",
+        "basis": "logs tool returned status partial, evidence empty, omitted 1, gap:1.",
+        "how_to_verify": "Re-run the logs query for ERROR and WARN levels over 02:00Z–03:30Z, and search for provider 429, throttle, and retry messages. Re-fetch the missing row if the tool allows it."
+      },
+      {
+        "statement": "Send latency, throughput, and worker count were not queried in this task, so they remain unknown.",
+        "basis": "Tool calls were limited to cpu_pct, queue_depth, consumer_lag, WARN logs, and deploys.",
+        "how_to_verify": "Query send_latency, throughput, and worker-count metrics for the same window in a follow-up investigation."
+      },
+      {
+        "statement": "No scaling events or scheduled jobs (cron, batch, maintenance) touched notification-svc or its infrastructure in the window.",
+        "basis": "None of the tools queried so far (deploys, metrics) return scaling or scheduled-job records, so their absence is not evidence that none occurred.",
+        "how_to_verify": "Query the autoscaler or infrastructure event log and the scheduler/cron job history for notification-svc and queue-broker for 01:00Z to 03:30Z."
+      },
+      {
+        "statement": "The queue-broker consumer.max_inflight reduction (500 to 200) at 02:12Z plausibly throttled consumption of notification messages and caused the 20 to 45 minute delivery delays.",
+        "basis": "Timing matches the 02:15Z onset. Lower in-flight limits reduce parallel consumption, which would delay queued pushes. This is inference, not shown by any tool result.",
+        "how_to_verify": "Check queue-broker consumer lag and notification-svc queue depth or consumer throughput between 02:00Z and 03:30Z, then see whether restoring max_inflight to 500 removes the lag."
+      },
+      {
+        "statement": "The v3.3.0 deploy at 02:10Z (template rendering refactor and queue client bump) may have contributed to the delays.",
+        "basis": "It is the only notification-svc change in the window and is 5 minutes before onset. No evidence yet links it to queue behaviour.",
+        "how_to_verify": "Compare notification-svc error and latency logs before and after 02:10Z, and check whether the queue client version change alters consumer prefetch or ack behaviour."
+      },
+      {
+        "statement": "The recovery around 03:00Z was not caused by a recorded change, so it may reflect queue backlog draining or an unrecorded action.",
+        "basis": "No deploy or config change appears near 03:00Z in the results returned.",
+        "how_to_verify": "Check queue-broker consumer lag and config audit logs for changes after 03:00Z, including any revert of max_inflight, and check notification-svc logs for the recovery point."
+      },
+      {
+        "statement": "Metrics coverage is incomplete. Only one cpu_pct sample at 02:30Z was returned, with no queue depth, latency or throughput data.",
+        "basis": "The metrics call was made with name null and returned a single point, so the sampling appears sparse or partial.",
+        "how_to_verify": "Re-query metrics for notification-svc and queue-broker over 01:00Z to 03:30Z for queue depth, consumer lag, delivery latency and error rate."
+      },
+      {
+        "statement": "The dependency result is incomplete: no upstream callers of notification-svc and no datastore dependency were returned, even though direction was 'both'.",
+        "basis": "Both returned edges point downstream from notification-svc, and the result has no datastore or upstream entries.",
+        "how_to_verify": "Re-query dependencies for notification-svc with direction 'upstream', and check queue-broker and push-gateway for their own dependencies, including any datastore."
+      },
+      {
+        "statement": "queue-broker may be the source of the 02:15 to 03:00 UTC delay if a consumer inflight limit or broker setting changed.",
+        "basis": "Past incident past:inc09:0001 shows a broker tuning change causing a notification backlog, and the symptoms show a backlog-like delay that recovered on its own.",
+        "how_to_verify": "Pull deploys and config changes for queue-broker and notification-svc from 2026-11-18T01:30:00Z to 2026-11-18T03:30:00Z, and check broker metrics such as consumer inflight and queue depth for the same window."
+      },
+      {
+        "statement": "push-gateway may be throttling sends during an overnight campaign, as in the earlier provider-throttling incident.",
+        "basis": "Past incident past:inc09:0002 had a similar delay pattern caused by provider throttling during a campaign. No campaign schedule was checked here.",
+        "how_to_verify": "Pull push-gateway logs and metrics for throttling or rate-limit responses in the window, and check for campaigns scheduled between 02:00 and 03:30 UTC."
+      },
+      {
+        "statement": "The reported 02:15Z–03:00Z delay window is accurate, even though no latency, throughput or delivery metrics confirm it.",
+        "basis": "Timing comes only from the incident report. The only metric returned is one CPU sample at 02:30Z.",
+        "how_to_verify": "Pull per-minute delivery latency and throughput for notification-svc for 02:00Z–03:30Z."
+      },
+      {
+        "statement": "The 03:00Z recovery came from the backlog draining or an unrecorded action, not a recorded change.",
+        "basis": "Deploy and config queries for 01:00Z–03:30Z show no change near 03:00Z.",
+        "how_to_verify": "Check queue-broker config audit logs for a revert of max_inflight, autoscaler events, and broker queue depth and consumer lag for 02:00Z–03:30Z."
+      },
+      {
+        "statement": "No scheduled batch job or campaign ran in the window. This is unverified, because no scheduler or campaign data was queried.",
+        "basis": "None of the tools queried return scheduler or campaign records.",
+        "how_to_verify": "Query cron/batch job history and the campaign schedule for 01:30Z–03:30Z, and push-gateway logs for 429 or throttle responses. Re-run the partial WARN log query (gap:1)."
+      },
+      {
+        "statement": "The max_inflight reduction from 500 to 200 at 02:12Z is the likely trigger for the backlog, because depth growth begins right after it.",
+        "basis": "Timing: depth was 1200 at 02:10Z and 94000 at 02:30Z, with the config change at 02:12Z in between.",
+        "how_to_verify": "Get consumer_inflight pinned at 200 after 02:12Z and a consume-rate drop beginning near 02:12Z, using a working metric name."
+      },
+      {
+        "statement": "The recovery near 03:00Z was not caused by a max_inflight revert, since none appears in the audit.",
+        "basis": "The config audit shows only the 02:12Z change through 04:00Z.",
+        "how_to_verify": "Check the audit after 04:00Z and the current live value of consumer.max_inflight, and look for a consumer scale-out, client restart, or inbound-traffic drop around 03:00Z."
+      },
+      {
+        "statement": "It is not yet established whether inbound publish rate spiked at about 02:15Z (load burst) or stayed flat while consume rate dropped (cap or client limit).",
+        "basis": "publish_rate and consume_rate queries returned no data, so the two hypotheses cannot be separated.",
+        "how_to_verify": "Retrieve enqueue and dequeue counts from the broker's raw stats or from producer-side metrics for notification-svc, 02:00Z to 03:30Z."
+      },
+      {
+        "statement": "Queue depth coverage is sparse: four samples about 15 to 30 minutes apart, not the per-minute series requested. The true peak and the exact recovery time may be missed.",
+        "basis": "Only four notifications_queue_depth rows were returned.",
+        "how_to_verify": "Re-query notifications_queue_depth at one-minute resolution for 02:00Z to 03:30Z, and check whether the tool truncated results."
+      },
+      {
+        "statement": "The 20 to 45 minute delivery delay is consistent with the backlog size, but this has not been checked against actual delivery timestamps.",
+        "basis": "Depth of about 151000 at 02:55Z and the reported symptom window; no consume-rate or delivery-latency data was available to convert depth into delay.",
+        "how_to_verify": "Compare notification enqueue timestamps with delivery timestamps from notification-svc logs for 02:00Z to 03:30Z."
+      },
+      {
+        "statement": "It is unknown whether the 200 cap is enforced by the broker or by the consumer client, because the config audit is scoped to queue-broker.",
+        "basis": "The changed key is consumer.max_inflight in queue-broker config, but no consumer-side config or deploy records were pulled.",
+        "how_to_verify": "Check notification-svc consumer config and deploys for a matching max_inflight or prefetch setting in the same window."
+      },
+      {
+        "statement": "Queries for notifications_consumer_inflight, notifications_consume_rate, and notifications_publish_rate over 02:00Z to 04:00Z returned no samples.",
+        "basis": "Stated as a fact, but it cites no evidence IDs, so it is kept as an assumption.",
+        "how_to_verify": "Find a tool result that shows it and cite that row's evidence ID."
+      },
+      {
+        "statement": "Provider throttling did not occur in the 02:15Z to 03:00Z window as the hypothesis states. The only throttle signal is a single 429 that was retried successfully, and no throttle or rate-limit messages were returned.",
+        "basis": "The push-gateway WARN query returned one 429 row, and no other throttle, rate-limit or retry evidence appeared in any result.",
+        "how_to_verify": "Query push-gateway logs for 429, throttle, rate limit and retry across 02:00Z to 03:30Z at full resolution, and check provider-side rate-limit dashboards or provider status for that window."
+      },
+      {
+        "statement": "The notification-svc ERROR query returned no rows, so no errors are evidenced for the window. This is an absence of results, not proof that no errors occurred.",
+        "basis": "The ERROR-level logs query returned an empty evidence list with status ok and omitted 0.",
+        "how_to_verify": "Repeat the ERROR query with a broader window and also query DEBUG/INFO for delivery-retry or timeout messages."
+      },
+      {
+        "statement": "No send_latency data exists for push-gateway in the window, so latency during the delay is unknown.",
+        "basis": "The send_latency metric query returned an empty evidence list.",
+        "how_to_verify": "Confirm the metric name in push-gateway's metric catalogue and re-query, or check dashboards for p50/p99 send latency for 02:00Z to 03:30Z."
+      },
+      {
+        "statement": "No campaign or bulk-send marker was found. The tools used do not cover campaign events directly, so the 14-to-165 per-second rise cannot be attributed to a campaign.",
+        "basis": "Only deploys and config changes were queried in the window and returned no campaign entries. Metric samples are sparse, roughly 35 minutes apart, so the rise may reflect normal diurnal or scheduled load.",
+        "how_to_verify": "Query the campaign or marketing scheduler for sends between 02:00Z and 03:30Z, and pull push-gateway request_rate at one-minute resolution."
+      },
+      {
+        "statement": "A plausible mechanism is that the 02:10Z notification-svc deploy and 02:12Z consumer.max_inflight cut (500 to 200) reduced consumer throughput, causing the lag seen at 02:13Z and the delay. The data does not establish this.",
+        "basis": "Timing aligns: the deploy and config change precede the first lag WARN by about three minutes, and the lag itself was 38s.",
+        "how_to_verify": "Compare notification-svc consumer lag and queue depth per minute before and after 02:12Z, and check whether the delay ends when max_inflight or the deploy is reverted; check the v3.3.0 queue client change in isolation."
+      },
+      {
+        "statement": "The recovery at about 03:00Z is not confirmed by the data. No push-gateway rate or latency samples exist between 02:30Z and 03:05Z, and no config or deploy reversal appears in the window.",
+        "basis": "Metric sampling is sparse, and the deploy and config queries returned no events after 02:12Z.",
+        "how_to_verify": "Pull consumer lag and consumer.max_inflight history after 03:00Z to see whether the value was restored or the lag cleared on its own."
+      },
+      {
+        "statement": "The drain from 151000 at 02:55Z to 4100 at 03:10Z, about 160/s net, matches the 165/s send rate at 03:05Z. Inbound was therefore modest, and the incident was a consumption collapse rather than an inbound load burst.",
+        "basis": "Arithmetic on metric:inc09:depth:0003, metric:inc09:depth:0004 and metric:inc09:sent:0002. Net growth from 02:10Z to 02:30Z of about 77/s plus 14/s sent implies roughly 90/s inbound, which is below the 165/s capacity.",
+        "how_to_verify": "Retrieve publish_rate and consume_rate per minute, from broker raw stats or producer-side counters, for 02:00Z to 03:30Z."
+      },
+      {
+        "statement": "In-flight utilization separates h1 from h2 and h3. If inflight is pinned at 200, the broker cap binds (h1). If it stays well below 200, the limit is the client (h2) or downstream waiting (h3).",
+        "basis": "Critic's discriminating test. The notifications_consumer_inflight query returned no samples.",
+        "how_to_verify": "Fix the metric name and pull consumer inflight per minute from the broker for 02:00Z to 03:30Z."
+      },
+      {
+        "statement": "Throttling could have been more extensive than the single 429 that was returned, because the earlier notification-svc WARN query was partial (gap:1) and sampling is sparse.",
+        "basis": "t1 reported 1 of 1 rows missing. c1.2 returned only one push-gateway 429.",
+        "how_to_verify": "Query push-gateway and notification-svc logs at full resolution for 429, throttle and retry messages for 02:00Z to 03:30Z, and check the provider's rate-limit dashboard."
+      },
+      {
+        "statement": "Something time-bounded changed around 02:55Z to 03:05Z, such as a consumer restart or reconnect, a provider-side limit lifting, or a rebalance. No deploy or config event records it.",
+        "basis": "Throughput went from 14/s to 165/s while max_inflight stayed at 200 and no rollback was recorded.",
+        "how_to_verify": "Check notification-svc pod restarts, consumer group rebalance logs, autoscaler events and provider status for 02:50Z to 03:10Z."
+      },
+      {
+        "statement": "The consumers stalled or slowed after the v3.3.0 queue client bump, and the lag growth from 02:13Z to 02:59Z reflects that. The log lines show lag growth but do not explicitly say consumers stalled.",
+        "basis": "Lag rose from 38s to 1,940s over about 46 minutes, starting shortly after the v3.3.0 start and the queue client bump. No other change appears in the deploy results.",
+        "how_to_verify": "Pull consumer-group lag and per-partition consumption rate metrics for 02:00Z–03:30Z, and check whether the rate fell to near zero or just dropped."
+      },
+      {
+        "statement": "The 02:59:10Z consumer group rebalance is the mechanism that ended the delay. The logs do not show what triggered it.",
+        "basis": "Recovery lag and throughput appear after the rebalance log line, but no log line shows a restart, reconnect or other trigger before it.",
+        "how_to_verify": "Check orchestrator and Kubernetes events for pod restarts, scaling or membership changes around 02:55Z–03:00Z, and check the queue broker's group coordinator logs for the rebalance reason."
+      },
+      {
+        "statement": "The log set is incomplete. There are no log lines between 02:13:05Z and 02:59:10Z, so either the service was silent or the logs were not captured.",
+        "basis": "The unfiltered and WARN-level queries returned only four lines for the full 60-minute window, and the tool reported omitted: 0. A service pushing notifications normally logs more than this.",
+        "how_to_verify": "Confirm log pipeline health for notification-svc over 02:00Z–03:30Z and re-query with DEBUG and INFO levels and keyword-specific searches, if the logs tool supports them."
+      },
+      {
+        "statement": "Keyword searches for restart, reconnect, ack timeout, prefetch, session expired and connection reset could not be run as filters. The logs tool takes only service, time window and level, so those keywords were not matched server-side.",
+        "basis": "The logs tool schema has no keyword parameter. The task's keyword list was therefore checked only by reading the returned lines, and the four lines returned contain none of those terms.",
+        "how_to_verify": "Run the queue client's own logs (consumer library, broker client) for the same window and search those keywords directly."
+      },
+      {
+        "statement": "The cpu_pct sample of 11.0 at 02:30Z does not show whether the service was resource-constrained, because only one sample was returned.",
+        "basis": "The metrics query was unfiltered by name but returned a single sample for the whole hour.",
+        "how_to_verify": "Re-query metrics by name for consumer lag, consumer throughput, queue ack latency, pod restarts and CPU for 02:00Z–03:30Z, with the full sample series."
+      },
+      {
+        "statement": "The 02:10:00Z deploy timestamp and the 02:11:30Z startup log are the same release. The 90-second gap is likely rollout time or a late record, not a separate event.",
+        "basis": "Both are v3.3.0 and both fall within the same few minutes, with no other deploy in the window.",
+        "how_to_verify": "Check the deploy system's rollout timeline for v3.3.0 pods, including per-pod start times."
+      },
+      {
+        "statement": "Sustained pushcloud throttling (h3) is not supported by this data. The only 429 found is a single retried batch at 02:15:41Z, which is outside the 02:55Z to 03:05Z window the hypothesis is about.",
+        "basis": "One WARN 429 log in the queried range, and no ERROR logs.",
+        "how_to_verify": "Query push-gateway logs for 429/rate-limit/throttle/retry at INFO and DEBUG levels, and for the 02:40Z to 03:15Z window, to confirm no other throttle signals exist."
+      },
+      {
+        "statement": "No send_latency or provider response latency data exists for the window, so the throttling hypothesis cannot be tested against latency at 1-minute resolution.",
+        "basis": "The send_latency metric query returned zero samples. The unfiltered metrics query returned only two pushes_sent_per_s samples, not 1-minute data.",
+        "how_to_verify": "Confirm the metric name in push-gateway's metric catalogue and query pushcloud response latency or 429 counters directly at 1-minute resolution for 02:10Z to 03:10Z."
+      },
+      {
+        "statement": "The rise in pushes_sent_per_s from 14 to 165 between 02:30Z and 03:05Z may reflect a backlog drain or a traffic ramp, and may be the more relevant explanation for late delivery.",
+        "basis": "Two samples show the jump, but the timing of the ramp and any queueing are unknown.",
+        "how_to_verify": "Pull pushes_sent_per_s and queue depth or backlog metrics at 1-minute resolution for 02:00Z to 03:30Z, and compare with the notification-svc enqueue rate."
+      },
+      {
+        "statement": "I stopped at 4 tool calls, the budget set in the task parameters. The tool results reported more calls remaining, so the budget may be counted differently than the parameters suggest.",
+        "basis": "Four calls made against max_tool_calls: 4 in the task parameters.",
+        "how_to_verify": "Confirm the intended call budget for c2.2 with whoever set the task parameters."
+      },
+      {
+        "statement": "The 02:59:10Z consumer group rebalance is the event that ended the stall, not just a coincident log line.",
+        "basis": "Lag peaked at 1,940s and was already falling at the rebalance. Throughput was 165/s and lag 2s by 03:06Z. No other change is recorded near 03:00Z.",
+        "how_to_verify": "Pull the broker group coordinator logs for the rebalance reason and the member list before and after 02:59Z, plus per-partition consumption rates for 02:12Z to 03:06Z."
+      },
+      {
+        "statement": "Before the rebalance, fewer than 3 consumers were effectively consuming, or one member held partitions without progressing.",
+        "basis": "The rebalance log reports 3 members, and throughput rose roughly 12x right afterwards with the cap unchanged.",
+        "how_to_verify": "Check consumer group membership and partition assignment history, and Kubernetes pod and rollout events for notification-svc, for 02:10Z to 03:00Z."
+      },
+      {
+        "statement": "Missing logs between 02:13Z and 02:59Z reflect sparse logging or capture, not proof that consumers emitted no errors or timeouts.",
+        "basis": "Only four lines were returned for 60 minutes, and the logs tool has no keyword filter.",
+        "how_to_verify": "Query the queue client library and DEBUG logs for ack timeout, session expiry and heartbeat messages, and confirm log pipeline health for the window."
+      },
+      {
+        "statement": "Whether the 200 cap bound during the stall is unknown, because inflight utilization was never retrieved.",
+        "basis": "The inflight, consume-rate and publish-rate queries returned nothing on repeated attempts.",
+        "how_to_verify": "Compare the v3.3.0 client's prefetch and max_inflight defaults with the previous version, and diff the client changelog for consumer-group and ack handling changes."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Retrieve notification-svc consumer logs for 02:13Z to 02:59Z and search for stall, ack timeout, reconnect, or partition-hold messages. The logs tool cannot filter by keyword, so pull the full window and review it directly.",
+        "rationale": "The logs between 02:13Z and 02:59Z are absent from the evidence set. Confirming a stall, ack timeout, or reconnect at the client would directly test h2's mechanism, and it is the main gap blocking a higher-confidence conclusion.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Reproduce the v3.3.0 queue client behavior in staging under production-like load and partition count, checking for consumer stalls, held partitions, and per-message hold time near 14s.",
+        "rationale": "h2 is the top hypothesis at 0.55 but has no log line naming the stall. A controlled reproduction would confirm or refute that the new client causes blocked consumers.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Prepare a rollback of notification-svc to the pre-v3.3.0 build as a contingency, to be executed only if the stall reproduces or the delay recurs. Do not roll back on the current evidence alone, since the lag recovered without intervention.",
+        "rationale": "The deploy at 02:11:30Z precedes the onset, and rollback is the fastest mitigation if the client is confirmed as the cause. Because the incident self-recovered, it should be a prepared option rather than an immediate action.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Pull queue-broker group coordinator logs and partition assignment history from 02:10Z to 03:00Z to identify what triggered the rebalance at 02:59:10Z and whether any member was stale or left during the rollout.",
+        "rationale": "The rebalance is the only logged event at the recovery point, and its trigger is unknown. Coordinator logs would show whether the broker held a stale assignment, which is the core of h4, and would separate broker-side from client-side causes.",
+        "hypothesis_id": "h4"
+      },
+      {
+        "action": "Review whether queue-broker consumer.max_inflight should be restored from 200 to 500, and confirm who set the 02:12Z change and why. Treat this as a review item, not an immediate change, until the h2 stall is understood.",
+        "rationale": "The cap at 200 may have amplified the backlog while hold time was elevated, but recovery occurred with the cap unchanged, so it is not the primary cause. Its intent is unconfirmed, and it should be reviewed alongside the client fix.",
+        "hypothesis_id": "h1"
+      },
+      {
+        "action": "Add alerting on notification-svc consumer lag, send rate dropping below a threshold while CPU is low, and consumer group rebalance events, so a recurrence is detected early and paired with log capture.",
+        "rationale": "The incident was detected through delayed notifications rather than a monitored signal. Alerts on the h2 signature (low sends, low CPU, growing lag) would shorten detection and preserve the logs needed to confirm the mechanism.",
+        "hypothesis_id": "h2"
+      },
+      {
+        "action": "Check pushcloud provider status and 429 history for the 02:15Z window, and confirm push-gateway send-rate data, to close out h3.",
+        "rationale": "h3 is low at 0.07 with only one 429 that was retried successfully. A brief check would rule out a third-party cause without a large investigation effort.",
+        "hypothesis_id": "h3"
+      }
+    ],
+    "gaps": [],
+    "metrics": {
+      "tool_calls": 30,
+      "llm_calls": 46,
+      "tokens_in": 132588,
+      "tokens_out": 46335,
+      "cache_tokens": 0,
+      "latency_s": 290.084
+    },
+    "terminated_by": "tool_budget",
+    "rule_adjustments": [
+      {
+        "rule": "gap_closed",
+        "subject": "gap:1",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "logs gap in t1: partial result: 1 of 1 rows missing"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      },
+      {
+        "rule": "gap_closed",
+        "subject": "gap:2",
+        "detail": "A later successful query to the same tool for the same service closed this gap",
+        "ids": [
+          "metrics gap in t1: timeout after 3 attempts"
+        ],
+        "confidence_before": null,
+        "confidence_after": null
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "INCONCLUSIVE",
+    "expected_service": null,
+    "expected_category": null,
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 83,
+    "grounded": 83,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 3,
+        "rationale": "Most citations match their rows: deploy:inc09:0001, log:inc09:0002/0003/0007/0008, the depth and sent metrics, and config:inc09:0001. However, two facts say metric:inc09:cpu:0001 is the only metric sample in the window, which the cited depth and sent rows contradict. h2's '14s hold time' mechanism is derived arithmetic with no evidence behind it, and several facts are duplicated."
+      },
+      "fact_assumption_separation": {
+        "score": 2,
+        "rationale": "The assumptions carry a basis and a verification step, but many are stale and contradict established facts. They claim queue depth is unknown despite depth:0001–0004, claim no push-provider log rows despite log:inc09:0005, and call max_inflight the likely trigger while h1 is ranked as a minor co-factor. The h2 stall mechanism is presented in the hypothesis summary as near-fact even though no log shows a stall."
+      },
+      "recommended_actions": {
+        "score": 4,
+        "rationale": "The actions are safe and specific. They retrieve the missing 02:13–02:59 logs (the key gap), pull coordinator logs on the trigger for the rebalance seen in log:inc09:0007, add lag and rebalance alerting, and hold any rollback as a contingency rather than acting on current evidence. The staging reproduction and the rollback framing lean toward the deploy story, but nothing proposed is harmful."
+      },
+      "fell_for_trap": {
+        "answer": "yes",
+        "rationale": "The top-ranked hypothesis h2 (bad_deploy, 0.55) rests on deploy:inc09:0001, log:inc09:0002 and log:inc09:0003, attributing the stall to the new queue client. That is exactly the planted misleading story, and the only grounds are timing amid missing logs, even though the report labels the outcome inconclusive. It did correctly discount the max_inflight and provider-throttling traps."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 17056,
+      "tokens_out": 1212,
+      "cache_tokens": 0
+    },
+    "latency_s": 12.5,
+    "judged_at": "2026-11-13T07:29:22.214145Z"
+  }
+}

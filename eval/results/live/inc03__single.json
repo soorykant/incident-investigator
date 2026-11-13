@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "run": "live",
+  "incident_id": "inc03",
+  "system": "single",
+  "llm": "models.toml",
+  "finished_at": "2026-11-13T06:48:46.439834Z",
+  "report": {
+    "incident_id": "inc03",
+    "outcome": "ROOT_CAUSE",
+    "ranked_hypotheses": [
+      {
+        "id": "H1",
+        "service": "avatar-store",
+        "category": "dependency_failure",
+        "summary": "avatar-store volume vol-data-2 went read-only after I/O errors, which made shard 2 unavailable. Avatar GETs to that shard failed or timed out, and profile-svc returned 503s. avatar-store's health check only verifies that the process is up, so it stayed green and the failure was not caught.",
+        "supporting_ids": [
+          "log:inc03:0003",
+          "log:inc03:0008",
+          "metric:inc03:avok:0002",
+          "metric:inc03:avok:0001",
+          "log:inc03:0004",
+          "log:inc03:0009",
+          "log:inc03:0014",
+          "metric:inc03:err:0001",
+          "metric:inc03:err:0002",
+          "metric:inc03:avhealth:0001",
+          "log:inc03:0010"
+        ],
+        "contradicting_ids": [],
+        "proposed_confidence": 0.75,
+        "final_confidence": 0.75
+      },
+      {
+        "id": "H2",
+        "service": "profile-svc",
+        "category": "bad_deploy",
+        "summary": "profile-svc v1.8.0 (the new avatar thumbnail renderer) has a nil pointer bug in render.AvatarThumbnail. It panics and causes pod restarts, which adds to the 503s; it is likely triggered when an avatar fetch fails.",
+        "supporting_ids": [
+          "deploy:inc03:0001",
+          "log:inc03:0005",
+          "metric:inc03:restarts:0001"
+        ],
+        "contradicting_ids": [
+          "metric:inc03:err:0001",
+          "log:inc03:0003",
+          "log:inc03:0004"
+        ],
+        "proposed_confidence": 0.3,
+        "final_confidence": 0.2
+      }
+    ],
+    "facts": [
+      {
+        "statement": "profile-svc v1.8.0 ('New avatar thumbnail renderer') was deployed at 08:40 UTC.",
+        "evidence_ids": [
+          "deploy:inc03:0001"
+        ]
+      },
+      {
+        "statement": "profile-svc error rate was 0.3% at 09:00 UTC, 20 minutes after the v1.8.0 deploy. It was 38% at 09:15 UTC.",
+        "evidence_ids": [
+          "metric:inc03:err:0001",
+          "metric:inc03:err:0002"
+        ]
+      },
+      {
+        "statement": "profile-svc pod_restarts was 7 at 09:15 UTC.",
+        "evidence_ids": [
+          "metric:inc03:restarts:0001"
+        ]
+      },
+      {
+        "statement": "At 09:11:48 UTC avatar-store logged that volume vol-data-2 was remounted read-only after I/O errors and that shard 2 was unavailable.",
+        "evidence_ids": [
+          "log:inc03:0003"
+        ]
+      },
+      {
+        "statement": "avatar-store logged read errors (EIO) on shard 2, for example for /avatars/u-3310 at 09:14:02.",
+        "evidence_ids": [
+          "log:inc03:0008"
+        ]
+      },
+      {
+        "statement": "avatar-store request_success_pct fell from 99.9% at 09:00 to 61% at 09:15. Over the same period its health_check_ok stayed at 1.0 and /healthz kept returning 200 ('process up').",
+        "evidence_ids": [
+          "metric:inc03:avok:0001",
+          "metric:inc03:avok:0002",
+          "metric:inc03:avhealth:0001",
+          "log:inc03:0010"
+        ]
+      },
+      {
+        "statement": "profile-svc returned 503s that it attributed to avatar-store GET timeouts after 3000ms. The first was at 09:12:20, about 30s after the avatar-store volume error, and the timed-out requests included u-3310.",
+        "evidence_ids": [
+          "log:inc03:0004",
+          "log:inc03:0009",
+          "log:inc03:0014"
+        ]
+      },
+      {
+        "statement": "profile-svc logged 'panic: nil pointer dereference in render.AvatarThumbnail (v1.8.0)' at 09:12:41.",
+        "evidence_ids": [
+          "log:inc03:0005"
+        ]
+      }
+    ],
+    "assumptions": [
+      {
+        "statement": "The v1.8.0 panic is triggered when the avatar fetch fails or returns nil. That would explain why it appeared only after the avatar-store failure and not during the 30 minutes after the deploy.",
+        "basis": "Timing: the error rate was 0.3% at 09:00 and the panic first appeared at 09:12:41, after the avatar-store failure.",
+        "how_to_verify": "Review the render.AvatarThumbnail code for nil handling of a failed avatar response, and check the panic stack traces."
+      },
+      {
+        "statement": "The pod restarts come from the v1.8.0 panics, not from liveness probe failures.",
+        "basis": "A panic log appears near the restart count, but only one panic line was returned.",
+        "how_to_verify": "Check the pod termination reasons and the full DEBUG/WARN logs for profile-svc."
+      },
+      {
+        "statement": "There may be other deploys or config changes, for example to avatar-store or its storage, that I have not seen.",
+        "basis": "The all-services deploy query timed out (gap:1). Only the profile-svc-filtered query succeeded.",
+        "how_to_verify": "Re-run the deploys query for avatar-store and the infrastructure/storage services."
+      },
+      {
+        "statement": "The metrics are sparse: only the 09:00 and 09:15 samples were returned, so the exact onset times are inferred from the logs.",
+        "basis": "The tools returned only a few samples.",
+        "how_to_verify": "Query the metrics at finer resolution."
+      }
+    ],
+    "recommended_actions": [
+      {
+        "action": "Check the current state of avatar-store volume vol-data-2 (mount mode, kernel/disk I/O error logs, cloud volume status) and whether shard 2 is still unavailable.",
+        "rationale": "H1 says vol-data-2 went read-only after I/O errors and took shard 2 down. Confirming the volume and shard state comes before any remediation, and it shows whether the failure is still ongoing.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "If shard 2 is confirmed unavailable, fail it over to a healthy replica or move it to a new volume restored from the latest snapshot/replica. Do not force a read-write remount of the volume that is reporting I/O errors.",
+        "rationale": "Restoring shard 2 should stop the failing or timing-out avatar GETs that H1 identifies as the cause of profile-svc's 503s. Remounting a disk that is throwing I/O errors risks data corruption.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "As an interim mitigation, configure profile-svc to use a short timeout on avatar-store calls and serve a default placeholder avatar when the fetch fails, instead of failing the whole profile request.",
+        "rationale": "Under H1, one dependency (avatar GETs to shard 2) takes down entire profile pages. Graceful degradation would contain user impact while avatar-store is repaired.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Compare per-shard avatar-store GET error and latency rates with profile-svc's 503 rate over 08:30–09:50 UTC to confirm the 503s are concentrated on avatars that map to shard 2.",
+        "rationale": "This tests H1's causal chain directly. A strong correlation limited to shard 2 would confirm it; failures spread across all shards would weaken it.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Change the avatar-store health check to cover data-path readiness (a read probe per shard and a writable-volume check), not just whether the process is running.",
+        "rationale": "H1 notes the health check stayed green while shard 2 was down, so the failure went undetected and traffic kept being routed to the broken shard.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Check the other avatar-store volumes and hosts for I/O errors or read-only remounts.",
+        "rationale": "H1's root event was disk I/O errors. If other volumes show the same pattern, more shards may fail the same way.",
+        "hypothesis_id": "H1"
+      },
+      {
+        "action": "Pull the panic stack traces from the restarting profile-svc pods and check whether the panics in render.AvatarThumbnail happen only when an avatar fetch has failed (nil avatar/image response).",
+        "rationale": "H2 says the v1.8.0 nil pointer panic is triggered by failed avatar fetches and makes the 503s worse through pod restarts. Confirming the trigger tells us whether the panic is a secondary amplifier of H1 or a separate defect.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "If the panics are confirmed, turn off the new avatar thumbnail renderer with a feature flag if one exists. Otherwise, consider rolling profile-svc back from v1.8.0 to the previous version.",
+        "rationale": "Removing the crashing code path should stop the pod restarts that H2 says add to the 503s. This is low-risk and complements fixing the avatar-store dependency, but by itself it is not expected to resolve the main failure (H2 confidence 0.2).",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Add a nil check / error handling in render.AvatarThumbnail so that a failed avatar fetch falls back to a placeholder instead of panicking, and add a test for the failed-fetch case.",
+        "rationale": "This is the permanent fix for the defect described in H2, so a dependency failure cannot crash pods in future.",
+        "hypothesis_id": "H2"
+      },
+      {
+        "action": "Re-run the deploys query that timed out (gap:1) to get the full deploy timeline for profile-svc and avatar-store around 08:30–09:50 UTC.",
+        "rationale": "The baseline deploy history is incomplete. A full timeline would confirm when v1.8.0 rolled out relative to the 09:12 UTC error onset and would show any avatar-store or infrastructure changes that could affect H1. This matters most for weighing H2.",
+        "hypothesis_id": "H2"
+      }
+    ],
+    "gaps": [
+      {
+        "id": "gap:1",
+        "tool": "deploys",
+        "reason": "timeout after 3 attempts",
+        "service": null,
+        "affects_hypotheses": [
+          "H2"
+        ],
+        "task_id": "baseline"
+      }
+    ],
+    "metrics": {
+      "tool_calls": 6,
+      "llm_calls": 8,
+      "tokens_in": 17735,
+      "tokens_out": 4572,
+      "cache_tokens": 0,
+      "latency_s": 48.586
+    },
+    "terminated_by": "done",
+    "rule_adjustments": [
+      {
+        "rule": "gap_penalty",
+        "subject": "H2",
+        "detail": "Open evidence gap lowers confidence by 0.1 (floor 0)",
+        "ids": [
+          "deploys gap in baseline: timeout after 3 attempts"
+        ],
+        "confidence_before": 0.3,
+        "confidence_after": 0.2
+      }
+    ],
+    "failures": []
+  },
+  "scores": {
+    "expected_outcome": "ROOT_CAUSE",
+    "expected_service": "avatar-store",
+    "expected_category": "dependency_failure",
+    "correct": true,
+    "accuracy_reason": "match",
+    "citations": 31,
+    "grounded": 31,
+    "grounding": 1.0,
+    "unknown_ids": []
+  },
+  "judge": {
+    "status": "ok",
+    "verdict": {
+      "evidence_support": {
+        "score": 5,
+        "rationale": "Every fact matches its cited rows. The read-only remount and shard 2 outage come from log:inc03:0003, the EIO read for u-3310 from log:inc03:0008, the 503s blamed on avatar-store timeouts from log:inc03:0004/0009/0014, and the success-rate drop alongside a green health check from avok:0001/0002, avhealth:0001 and log:inc03:0010. H2 correctly lists the 0.3% error rate at 09:00 (err:0001) and the earlier avatar-store failure as contradicting evidence."
+      },
+      "fact_assumption_separation": {
+        "score": 5,
+        "rationale": "Facts are limited to what the rows say. The panic trigger, the cause of the restarts, the missing deploy data and the sparse metrics are each stated as assumptions with a basis and a way to verify. The restart-cause assumption admits it rests on a single panic line and proposes checking termination reasons, which would expose the liveness-probe explanation."
+      },
+      "recommended_actions": {
+        "score": 4,
+        "rationale": "Remediation is specific and safe and focuses on avatar-store: verify the volume and shard state, fail over instead of force-remounting, degrade gracefully with a placeholder avatar, and make the health check cover the data path. The conditional rollback or flag-off of v1.8.0 is caveated and low-risk but adds little, given the restarts are mainly caused by handlers blocking on avatar-store."
+      },
+      "fell_for_trap": {
+        "answer": "no",
+        "rationale": "The top hypothesis is the avatar-store dependency failure. The v1.8.0 deploy and panic (deploy:inc03:0001, log:inc03:0005) are demoted to a secondary H2 at 0.2 confidence, with timing evidence against them. The green health check (avhealth:0001, log:0010) is explicitly explained away as shallow."
+      }
+    },
+    "error": null,
+    "model": "claude-opus-5-5",
+    "attempts": 1,
+    "llm_calls": 1,
+    "usage": {
+      "tokens_in": 6249,
+      "tokens_out": 988,
+      "cache_tokens": 0
+    },
+    "latency_s": 10.058,
+    "judged_at": "2026-11-13T07:27:16.664447Z"
+  }
+}

@@ -1,0 +1,27 @@
+# Which backend and model each role uses (DECISIONS.md Q8, Q15, Q20).
+# Opus for the hard thinking, Haiku for agents that mostly call tools and summarise.
+#
+# backend is one of:
+#   anthropic_api  the Anthropic Messages API; needs ANTHROPIC_API_KEY (default; the published evaluation)
+#   openai_compat  a local model (Ollama, LM Studio, vLLM) through /v1/chat/completions
+#   mock           the offline stand-in
+# A plain string such as `planner = "claude-opus-5-5"` means backend = "anthropic_api".
+# `investigate --llm <backend>` overrides the backend for every role.
+
+[roles]
+planner = { backend = "anthropic_api", model = "claude-opus-5-5" }
+reasoning = { backend = "anthropic_api", model = "claude-opus-5-5" }
+critic = { backend = "anthropic_api", model = "claude-opus-5-5" }
+baseline = { backend = "anthropic_api", model = "claude-opus-5-5" }
+judge = { backend = "anthropic_api", model = "claude-opus-5-5" }
+observability = { backend = "anthropic_api", model = "claude-haiku-5-5" }
+dependency = { backend = "anthropic_api", model = "claude-haiku-5-5" }
+reporting = { backend = "anthropic_api", model = "claude-haiku-5-5" }
+
+# Example: run the cheap tool-calling agents on a local model.
+# observability = { backend = "openai_compat", model = "qwen2.5:7b-instruct" }
+
+[backends.openai_compat]
+# Base URL of the OpenAI-compatible API. Precedence: $OPENAI_COMPAT_BASE_URL,
+# then this value, then http://localhost:11434/v1 (Ollama).
+# base_url = "http://localhost:1234/v1"   # LM Studio

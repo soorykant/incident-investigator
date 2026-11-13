@@ -1,0 +1,56 @@
+{
+  "id": "inc05",
+  "report": {
+    "title": "Mobile app balance screen failing",
+    "symptoms": [
+      "mobile-bff returns HTTP 502 for GET /v2/balance since 00:00 UTC",
+      "Nightly settlement batch reported failures shortly after midnight",
+      "Login and browsing in the mobile app still work"
+    ],
+    "affected_service": "mobile-bff",
+    "window_start": "2026-11-13T23:00:00Z",
+    "window_end": "2026-11-14T00:45:00Z",
+    "severity": "SEV1"
+  },
+  "logs": [
+    {"id": "log:inc05:0001", "timestamp": "2026-11-13T22:12:40Z", "service": "mobile-bff", "level": "INFO", "message": "Starting mobile-bff v7.1.0 (http client: netkit 3.0)"},
+    {"id": "log:inc05:0002", "timestamp": "2026-11-13T23:31:02Z", "service": "mobile-bff", "level": "INFO", "message": "Applied setting http.tls_min_version=1.3"},
+    {"id": "log:inc05:0003", "timestamp": "2026-11-13T23:45:10Z", "service": "mobile-bff", "level": "INFO", "message": "GET /v2/balance 200 in 95ms"},
+    {"id": "log:inc05:0004", "timestamp": "2026-11-13T23:58:30Z", "service": "mobile-bff", "level": "INFO", "message": "GET /v2/balance 200 in 101ms"},
+    {"id": "log:inc05:0005", "timestamp": "2026-11-14T00:00:04Z", "service": "mobile-bff", "level": "ERROR", "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid: current time 2026-11-14T00:00:04Z is after 2026-11-14T00:00:00Z"},
+    {"id": "log:inc05:0006", "timestamp": "2026-11-14T00:00:30Z", "service": "mobile-bff", "level": "WARN", "message": "netkit: handshake failed, retrying with fresh connection (attempt 2/2)"},
+    {"id": "log:inc05:0007", "timestamp": "2026-11-14T00:01:12Z", "service": "batch-settlement", "level": "ERROR", "message": "POST https://ledger-api.internal/v1/settle failed: certificate verify failed: certificate has expired"},
+    {"id": "log:inc05:0008", "timestamp": "2026-11-14T00:02:45Z", "service": "mobile-bff", "level": "ERROR", "message": "GET /v2/balance 502: call to ledger-api failed: x509: certificate has expired or is not yet valid"},
+    {"id": "log:inc05:0009", "timestamp": "2026-11-14T00:03:10Z", "service": "mobile-bff", "level": "INFO", "message": "GET /v2/profile 200 in 60ms (accounts-api)"},
+    {"id": "log:inc05:0010", "timestamp": "2026-11-14T00:05:00Z", "service": "ledger-api", "level": "INFO", "message": "Requests in last 5m: 12 (normal ~4,000); no application errors"},
+    {"id": "log:inc05:0011", "timestamp": "2026-11-13T23:05:00Z", "service": "ledger-api", "level": "WARN", "message": "cert-renewer: renewal of secret ledger-api-tls skipped: lock held by job renew-20261106 (stale)"},
+    {"id": "log:inc05:0012", "timestamp": "2026-11-14T00:10:20Z", "service": "batch-settlement", "level": "ERROR", "message": "Settlement run 20261114 aborted after 3 failed calls to ledger-api"}
+  ],
+  "metrics": [
+    {"id": "metric:inc05:err:0001", "timestamp": "2026-11-13T23:55:00Z", "service": "mobile-bff", "name": "error_rate_pct", "value": 0.2},
+    {"id": "metric:inc05:err:0002", "timestamp": "2026-11-14T00:05:00Z", "service": "mobile-bff", "name": "error_rate_pct", "value": 31.0},
+    {"id": "metric:inc05:certdays:0001", "timestamp": "2026-11-13T00:00:00Z", "service": "ledger-api", "name": "tls_cert_days_remaining", "value": 1.0},
+    {"id": "metric:inc05:certdays:0002", "timestamp": "2026-11-14T00:00:00Z", "service": "ledger-api", "name": "tls_cert_days_remaining", "value": 0.0},
+    {"id": "metric:inc05:rps:0001", "timestamp": "2026-11-14T00:05:00Z", "service": "ledger-api", "name": "requests_per_s", "value": 0.04}
+  ],
+  "deploys": [
+    {"id": "deploy:inc05:0001", "timestamp": "2026-11-13T22:10:00Z", "service": "mobile-bff", "version": "v7.1.0", "description": "Upgrade HTTP client library to netkit 3.0"}
+  ],
+  "config_changes": [
+    {"id": "config:inc05:0001", "timestamp": "2026-11-13T23:30:00Z", "service": "mobile-bff", "key": "http.tls_min_version", "old_value": "1.2", "new_value": "1.3"}
+  ],
+  "dependencies": [
+    {"id": "dependency:inc05:0001", "service": "mobile-bff", "depends_on": "ledger-api"},
+    {"id": "dependency:inc05:0002", "service": "mobile-bff", "depends_on": "accounts-api"},
+    {"id": "dependency:inc05:0003", "service": "batch-settlement", "depends_on": "ledger-api"},
+    {"id": "dependency:inc05:0004", "service": "ledger-api", "depends_on": "ledger-db"}
+  ],
+  "past_incidents": [
+    {"id": "past:inc05:0001", "title": "Mobile BFF connection errors after HTTP client upgrade", "tags": ["mobile", "http-client", "deploy", "handshake"], "root_cause": "A release changed HTTP client handshake settings that some backends did not support", "resolution": "Rolled back mobile-bff and pinned the client settings"},
+    {"id": "past:inc05:0002", "title": "Internal service unreachable after resolver change", "tags": ["network", "resolver"], "root_cause": "A resolver config push dropped an internal zone", "resolution": "Restored the zone and added a config check"}
+  ],
+  "failure_schedule": [
+    {"tool": "deploys", "call_index": 1, "mode": "error"},
+    {"tool": "metrics", "call_index": 1, "mode": "partial", "partial_fraction": 0.5}
+  ]
+}

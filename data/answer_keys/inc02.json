@@ -1,0 +1,17 @@
+{
+  "incident_id": "inc02",
+  "expected_outcome": "root_cause",
+  "service": "orders-api",
+  "category": "config_change",
+  "key_evidence_ids": ["config:inc02:0001", "log:inc02:0005", "log:inc02:0007", "metric:inc02:pool:0002", "metric:inc02:p99:0003"],
+  "traps": [
+    {
+      "description": "orders-api v4.12.0 shipped 7 minutes before the errors with a heavy new export job, and a past incident blames a release; but requests stay fast for 5 minutes after the deploy, the errors start right after the pool limit drops to 5, and they continue after the export finishes",
+      "misleading_evidence_ids": ["deploy:inc02:0001", "log:inc02:0003", "past:inc02:0001"]
+    },
+    {
+      "description": "A long autovacuum on orders-db, a vacuum tuning change and a matching past incident suggest the database is slow; but orders-db CPU is low, it has 9 of 400 connections in use and its slowest query is 38 ms",
+      "misleading_evidence_ids": ["log:inc02:0008", "config:inc02:0002", "past:inc02:0002"]
+    }
+  ]
+}
